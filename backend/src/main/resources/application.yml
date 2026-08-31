@@ -1,0 +1,31 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: syed-apiqa-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/syed_apiqa}
+    username: ${SPRING_DATASOURCE_USERNAME:apiqa_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:apiqa_password}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+syed:
+  safety:
+    ssrf-protection-enabled: true
+    production-delete-enabled: false
+    max-concurrency: 10
+    default-timeout-seconds: 15
+    max-response-size-bytes: 2097152 # 2MB

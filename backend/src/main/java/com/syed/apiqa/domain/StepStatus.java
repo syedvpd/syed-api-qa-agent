@@ -1,0 +1,19 @@
+package com.syed.apiqa.domain;
+
+public enum StepStatus {
+    PENDING,
+    RUNNING,
+    PASSED,
+    FAILED,
+    WARNING,
+    BLOCKED,
+    SKIPPED,
+    TIMEOUT,
+    NETWORK_ERROR,
+    AUTHENTICATION_ERROR,
+    AUTHORIZATION_ERROR,
+    RATE_LIMITED,
+    CONTRACT_ERROR,
+    CLEANUP_FAILED,
+    UNKNOWN
+}
