@@ -70,6 +70,8 @@ public class TestRun {
     @Column(name = "auth_login_url", length = 512)
     private String authLoginUrl;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Convert(converter = com.syed.apiqa.safety.EncryptedStringConverter.class)
     @Column(name = "auth_login_payload", columnDefinition = "TEXT")
     private String authLoginPayload;
 

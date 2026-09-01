@@ -40,6 +40,7 @@ public class TestSchedule {
     private String authType = "NONE";
 
     @JsonIgnore  // Security: Never serialize auth tokens in API responses
+    @Convert(converter = com.syed.apiqa.safety.EncryptedStringConverter.class)
     @Column(name = "auth_token", length = 1024)
     private String authToken;
 

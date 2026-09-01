@@ -6,15 +6,15 @@ services:
     container_name: syed-apiqa-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: syed_apiqa
-      POSTGRES_USER: apiqa_user
-      POSTGRES_PASSWORD: apiqa_password
+      POSTGRES_DB: ${POSTGRES_DB:-syed_apiqa}
+      POSTGRES_USER: ${POSTGRES_USER:-apiqa_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apiqa_password}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U apiqa_user -d syed_apiqa"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-apiqa_user} -d ${POSTGRES_DB:-syed_apiqa}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,12 +29,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/syed_apiqa
-      SPRING_DATASOURCE_USERNAME: apiqa_user
-      SPRING_DATASOURCE_PASSWORD: apiqa_password
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://postgres:5432/syed_apiqa}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-apiqa_user}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-apiqa_password}
       SERVER_PORT: 8080
       SYED_SAFETY_SSRF_PROTECTION_ENABLED: "true"
       SYED_SAFETY_PRODUCTION_DELETE_ENABLED: "false"
+      SYED_SECURITY_AUTH_ENABLED: "true"
+      SYED_AUTH_SECRET: ${SYED_AUTH_SECRET:-syed-apiqa-production-jwt-hmac-sha256-master-secret-key-32bytes}
+      SYED_ENCRYPTION_KEY: ${SYED_ENCRYPTION_KEY:-syed-apiqa-production-secret-encryption-key-256bits-v1}
     ports:
       - "8080:8080"
 

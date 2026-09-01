@@ -22,3 +22,8 @@ syed:
     ssrf-protection-enabled: false # Disabled for integration tests targeting local WireMock mock server
     production-delete-enabled: false
     default-timeout-seconds: 5
+  security:
+    auth-enabled: false
+    test-mode: true
+    auth-secret: test-secret-key-for-unit-testing-32bytes-long!
+    encryption-key: test-encryption-key-for-unit-testing-32bytes!

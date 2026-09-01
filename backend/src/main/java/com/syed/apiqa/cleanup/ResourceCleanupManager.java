@@ -107,13 +107,17 @@ public class ResourceCleanupManager {
                 String relativePath = resolved.getResolvedContent();
                 String targetUrl = baseUrl + (relativePath.startsWith("/") ? relativePath : "/" + relativePath);
 
-                ssrfGuard.validateTargetUrl(targetUrl);
+                SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(targetUrl);
 
                 HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
+                        .uri(URI.create(target.pinnedUrl()))
                         .timeout(Duration.ofSeconds(10))
                         .header("User-Agent", "Syed-API-QA-Agent-Cleanup/1.0")
                         .DELETE();
+
+                if (target.isPinned()) {
+                    reqBuilder.header("Host", target.originalHostHeader());
+                }
 
                 if (authToken != null && !authToken.isBlank()) {
                     reqBuilder.header("Authorization", "Bearer " + authToken.trim());

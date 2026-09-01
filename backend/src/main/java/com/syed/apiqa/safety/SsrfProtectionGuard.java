@@ -1,21 +1,26 @@
 package com.syed.apiqa.safety;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.UnknownHostException;
+import java.net.*;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * SSRF & Private IP Guard.
+ * SSRF & Private IP Guard with Anti-DNS Rebinding / Pinning Protection.
  * Prevents requests to localhost, loopback (127.0.0.1/8), private RFC 1918 subnets,
- * IPv6 loopbacks, and cloud instance metadata services (169.254.169.254).
+ * IPv6 loopbacks/site-local, Carrier-Grade NAT, and cloud instance metadata services (169.254.169.254).
+ *
+ * Provides IP pinning via ValidatedTarget to eliminate Time-of-Check to Time-of-Use (TOCTOU)
+ * DNS rebinding attacks where an attacker changes DNS records between validation and connection.
  */
 @Component
 public class SsrfProtectionGuard {
+
+    private static final Logger log = LoggerFactory.getLogger(SsrfProtectionGuard.class);
 
     @Value("${syed.safety.ssrf-protection-enabled:true}")
     private boolean ssrfProtectionEnabled;
@@ -25,14 +30,36 @@ public class SsrfProtectionGuard {
             "127.0.0.1",
             "::1",
             "metadata.google.internal",
-            "169.254.169.254"
+            "169.254.169.254",
+            "100.100.100.200"
     );
 
-    public void validateTargetUrl(String urlString) {
-        if (!ssrfProtectionEnabled) {
-            return;
-        }
+    public record ValidatedTarget(
+            URI originalUri,
+            InetAddress pinnedAddress,
+            String originalHost,
+            int port,
+            String pinnedUrl,
+            String originalHostHeader,
+            boolean isPinned
+    ) {}
 
+    public boolean isSsrfProtectionEnabled() {
+        return ssrfProtectionEnabled;
+    }
+
+    /**
+     * Legacy validation method preserving backwards compatibility.
+     */
+    public void validateTargetUrl(String urlString) {
+        resolveAndValidate(urlString);
+    }
+
+    /**
+     * Resolves the target hostname once, strictly validates all resolved IP addresses,
+     * and produces a pinned target that connects directly to the validated IP without secondary DNS resolution.
+     */
+    public ValidatedTarget resolveAndValidate(String urlString) {
         if (urlString == null || urlString.isBlank()) {
             throw new IllegalArgumentException("Target URL cannot be empty");
         }
@@ -59,36 +86,139 @@ public class SsrfProtectionGuard {
             throw new IllegalArgumentException("Target URL does not contain a valid host: " + urlString);
         }
 
+        int port = uri.getPort();
+        if (port == -1) {
+            port = "https".equalsIgnoreCase(scheme) ? 443 : 80;
+        }
+
+        String hostHeader = (uri.getPort() == -1) ? host : (host + ":" + uri.getPort());
+
+        // In test mode with SSRF disabled (e.g. WireMock on localhost), allow loopback
+        if (!ssrfProtectionEnabled) {
+            return new ValidatedTarget(uri, null, host, port, urlString, hostHeader, false);
+        }
+
         if (BLOCKED_HOSTS.contains(host.toLowerCase())) {
             throw new SecurityException("SSRF Guard: Target host is strictly blocked: " + host);
         }
 
+        InetAddress[] addresses;
         try {
-            InetAddress[] addresses = InetAddress.getAllByName(host);
-            for (InetAddress address : addresses) {
-                if (address.isLoopbackAddress()) {
-                    throw new SecurityException("SSRF Guard: Loopback target blocked: " + address.getHostAddress());
-                }
-                if (address.isSiteLocalAddress()) {
-                    throw new SecurityException("SSRF Guard: Private network target blocked: " + address.getHostAddress());
-                }
-                if (address.isLinkLocalAddress()) {
-                    throw new SecurityException("SSRF Guard: Link-local target blocked: " + address.getHostAddress());
-                }
-                if (address.isAnyLocalAddress()) {
-                    throw new SecurityException("SSRF Guard: Wildcard/any-local address blocked: " + address.getHostAddress());
-                }
-                if (isCloudMetadataAddress(address)) {
-                    throw new SecurityException("SSRF Guard: Cloud metadata IP blocked: " + address.getHostAddress());
-                }
-            }
+            addresses = InetAddress.getAllByName(host);
         } catch (UnknownHostException e) {
             throw new IllegalArgumentException("Unable to resolve host: " + host, e);
+        }
+
+        if (addresses.length == 0) {
+            throw new SecurityException("SSRF Guard: Host resolved to no IP addresses: " + host);
+        }
+
+        // Validate EVERY resolved address. If any address is blocked, reject to prevent multi-A record bypasses
+        for (InetAddress address : addresses) {
+            checkAddress(address);
+        }
+
+        // Pin to the first validated address to prevent DNS rebinding
+        InetAddress pinnedAddress = addresses[0];
+        String pinnedHost = pinnedAddress.getHostAddress();
+        if (pinnedAddress instanceof Inet6Address) {
+            pinnedHost = "[" + pinnedHost + "]";
+        }
+
+        // Construct pinned URL with IP address replacing the host
+        String pinnedUrl;
+        try {
+            URI pinnedUri = new URI(
+                    uri.getScheme(),
+                    uri.getUserInfo(),
+                    pinnedHost,
+                    uri.getPort(),
+                    uri.getPath(),
+                    uri.getQuery(),
+                    uri.getFragment()
+            );
+            pinnedUrl = pinnedUri.toASCIIString();
+        } catch (Exception e) {
+            // Fallback manual replacement if URI constructor fails on IPv6
+            pinnedUrl = urlString.replace("://" + host, "://" + pinnedHost);
+        }
+
+        return new ValidatedTarget(uri, pinnedAddress, host, port, pinnedUrl, hostHeader, true);
+    }
+
+    private void checkAddress(InetAddress address) {
+        if (address.isLoopbackAddress()) {
+            throw new SecurityException("SSRF Guard: Loopback target blocked: " + address.getHostAddress());
+        }
+        if (address.isSiteLocalAddress()) {
+            throw new SecurityException("SSRF Guard: Private network target blocked: " + address.getHostAddress());
+        }
+        if (address.isLinkLocalAddress()) {
+            throw new SecurityException("SSRF Guard: Link-local target blocked: " + address.getHostAddress());
+        }
+        if (address.isAnyLocalAddress()) {
+            throw new SecurityException("SSRF Guard: Wildcard/any-local address blocked: " + address.getHostAddress());
+        }
+        if (isCloudMetadataAddress(address)) {
+            throw new SecurityException("SSRF Guard: Cloud metadata IP blocked: " + address.getHostAddress());
+        }
+        if (isCarrierGradeNat(address)) {
+            throw new SecurityException("SSRF Guard: Carrier-Grade NAT IP blocked: " + address.getHostAddress());
+        }
+        if (isIpv4MappedIpv6(address)) {
+            throw new SecurityException("SSRF Guard: IPv4-mapped IPv6 address blocked: " + address.getHostAddress());
+        }
+        if (isIpv6SiteLocalOrUniqueLocal(address)) {
+            throw new SecurityException("SSRF Guard: IPv6 private/unique-local address blocked: " + address.getHostAddress());
         }
     }
 
     private boolean isCloudMetadataAddress(InetAddress address) {
         String ip = address.getHostAddress();
-        return "169.254.169.254".equals(ip);
+        return "169.254.169.254".equals(ip)
+                || "169.254.169.250".equals(ip)
+                || "169.254.169.251".equals(ip)
+                || "100.100.100.200".equals(ip);
+    }
+
+    private boolean isCarrierGradeNat(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 4) {
+            // 100.64.0.0/10 (100.64.0.0 to 100.127.255.255)
+            int first = bytes[0] & 0xFF;
+            int second = bytes[1] & 0xFF;
+            return first == 100 && (second >= 64 && second <= 127);
+        }
+        return false;
+    }
+
+    private boolean isIpv4MappedIpv6(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 16) {
+            boolean isMapped = true;
+            for (int i = 0; i < 10; i++) {
+                if (bytes[i] != 0) { isMapped = false; break; }
+            }
+            if (isMapped && (bytes[10] & 0xFF) == 0xFF && (bytes[11] & 0xFF) == 0xFF) {
+                // Extract mapped IPv4
+                try {
+                    byte[] ipv4Bytes = Arrays.copyOfRange(bytes, 12, 16);
+                    InetAddress ipv4 = InetAddress.getByAddress(ipv4Bytes);
+                    checkAddress(ipv4);
+                } catch (UnknownHostException ignored) {}
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isIpv6SiteLocalOrUniqueLocal(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        if (bytes.length == 16) {
+            int first = bytes[0] & 0xFF;
+            // fc00::/7 (fc00 - fdff)
+            return (first & 0xFE) == 0xFC;
+        }
+        return false;
     }
 }

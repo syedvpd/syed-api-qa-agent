@@ -117,9 +117,10 @@ public class HttpExecutionEngine {
             requestBody = bodyResolution.getResolvedContent();
         }
 
-        // 3. SSRF & Safety Pre-Check
+        // 3. SSRF & Safety Pre-Check with Anti-DNS Rebinding IP Pinning
+        SsrfProtectionGuard.ValidatedTarget validatedTarget;
         try {
-            ssrfGuard.validateTargetUrl(fullUrl);
+            validatedTarget = ssrfGuard.resolveAndValidate(fullUrl);
         } catch (SecurityException | IllegalArgumentException e) {
             step.setStatus(StepStatus.FAILED);
             step.setFailureReason("SSRF Guard violation: " + e.getMessage());
@@ -134,11 +135,12 @@ public class HttpExecutionEngine {
         }
 
         // 5. Execute HTTP Request with Retry & Timeout Safety
-        return dispatchWithSafety(step, fullUrl, requestBody, context, authType, authCredentials);
+        return dispatchWithSafety(step, fullUrl, validatedTarget, requestBody, context, authType, authCredentials);
     }
 
     private StepExecutionOutcome dispatchWithSafety(TestStep step,
                                                     String targetUrl,
+                                                    SsrfProtectionGuard.ValidatedTarget validatedTarget,
                                                     String requestBody,
                                                     ExecutionContext context,
                                                     String authType,
@@ -165,10 +167,14 @@ public class HttpExecutionEngine {
 
             try {
                 HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
+                        .uri(URI.create(validatedTarget != null ? validatedTarget.pinnedUrl() : targetUrl))
                         .timeout(Duration.ofSeconds(defaultTimeoutSeconds))
                         .header("User-Agent", "Syed-API-QA-Agent/1.0")
                         .header("Accept", "application/json, */*");
+
+                if (validatedTarget != null && validatedTarget.isPinned()) {
+                    reqBuilder.header("Host", validatedTarget.originalHostHeader());
+                }
 
                 if (requestBody != null && !requestBody.isBlank()) {
                     reqBuilder.header("Content-Type", "application/json; charset=UTF-8");

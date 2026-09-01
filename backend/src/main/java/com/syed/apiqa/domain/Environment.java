@@ -31,6 +31,8 @@ public class Environment {
     @Column(name = "auth_type", length = 50)
     private String authType;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Convert(converter = com.syed.apiqa.safety.EncryptedStringConverter.class)
     @Column(name = "auth_credentials", columnDefinition = "TEXT")
     private String authCredentials;
 

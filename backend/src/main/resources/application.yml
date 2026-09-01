@@ -29,3 +29,8 @@ syed:
     max-concurrency: 10
     default-timeout-seconds: 15
     max-response-size-bytes: 2097152 # 2MB
+  security:
+    auth-enabled: true
+    test-mode: false
+    auth-secret: ${SYED_AUTH_SECRET:syed-apiqa-production-jwt-hmac-sha256-master-secret-key-32bytes}
+    encryption-key: ${SYED_ENCRYPTION_KEY:syed-apiqa-production-secret-encryption-key-256bits-v1}

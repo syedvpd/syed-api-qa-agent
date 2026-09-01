@@ -1,20 +1,25 @@
 package com.syed.apiqa.discovery;
 
 import com.syed.apiqa.safety.SsrfProtectionGuard;
+import com.syed.apiqa.safety.SsrfProtectionGuard.ValidatedTarget;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SNIHostName;
+import javax.net.ssl.SSLParameters;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Real OpenAPI / Swagger specification fetcher.
- * Enforces strict pre-connection SSRF checks, redirects safety, connection/read timeouts,
- * and response body size limits.
+ * Enforces strict pre-connection SSRF checks, DNS rebinding / IP pinning defense,
+ * redirects safety, connection/read timeouts, and response body size limits.
  */
 @Service
 public class OpenApiFetchService {
@@ -36,36 +41,46 @@ public class OpenApiFetchService {
             throw new IllegalArgumentException("Specification URL cannot be empty");
         }
 
-        // 1. Enforce strict SSRF protection before opening any connection
-        ssrfGuard.validateTargetUrl(specUrl);
-
         int redirects = 0;
         String currentUrl = specUrl;
 
         while (redirects < 5) {
             try {
-                URI uri = URI.create(currentUrl);
-                URL url = uri.toURL();
+                // 1. Enforce strict SSRF & Anti-DNS Rebinding IP Pinning before connecting
+                ValidatedTarget target = ssrfGuard.resolveAndValidate(currentUrl);
 
+                URL url = URI.create(target.pinnedUrl()).toURL();
                 HttpURLConnection connection = (HttpURLConnection) url.openConnection();
                 connection.setConnectTimeout(timeoutSeconds * 1000);
                 connection.setReadTimeout(timeoutSeconds * 1000);
                 connection.setInstanceFollowRedirects(false);
+
+                // Set original virtual host header so web server routes properly while socket connects to pinned IP
+                connection.setRequestProperty("Host", target.originalHostHeader());
                 connection.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
                 connection.setRequestProperty("Accept", "application/json, application/yaml, text/yaml, */*");
 
+                // If HTTPS, configure SNI and verify certificate against original domain
+                if (connection instanceof HttpsURLConnection httpsConn) {
+                    SSLParameters sslParams = httpsConn.getSSLSocketFactory().getDefaultCipherSuites() != null
+                            ? new SSLParameters() : null;
+                    if (sslParams != null) {
+                        sslParams.setServerNames(List.of(new SNIHostName(target.originalHost())));
+                    }
+                    httpsConn.setHostnameVerifier((hostname, session) ->
+                            HttpsURLConnection.getDefaultHostnameVerifier().verify(target.originalHost(), session));
+                }
+
                 int statusCode = connection.getResponseCode();
 
-                // Handle Redirects safely with re-validation
+                // Handle Redirects safely with re-validation of destination
                 if (statusCode >= 300 && statusCode < 400) {
                     String redirectLocation = connection.getHeaderField("Location");
                     if (redirectLocation == null || redirectLocation.isBlank()) {
                         throw new IllegalStateException("HTTP redirect received without Location header");
                     }
-                    URI redirectedUri = uri.resolve(redirectLocation);
+                    URI redirectedUri = target.originalUri().resolve(redirectLocation);
                     currentUrl = redirectedUri.toString();
-                    // Re-validate the redirected destination with SSRF guard!
-                    ssrfGuard.validateTargetUrl(currentUrl);
                     redirects++;
                     continue;
                 }

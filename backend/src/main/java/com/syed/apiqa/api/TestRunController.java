@@ -240,8 +240,10 @@ public class TestRunController {
     }
 
     private String resolveRequesterId(String userId, java.security.Principal principal) {
-        if (userId != null && !userId.isBlank()) return userId.trim();
+        String verified = com.syed.apiqa.security.SecurityContext.getCurrentUserId();
+        if (verified != null && !verified.isBlank()) return verified;
         if (principal != null) return principal.getName();
+        if (userId != null && !userId.isBlank()) return userId.trim();
         return null;
     }
 
@@ -427,9 +429,7 @@ public class TestRunController {
         if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
         TestRun run = runOpt.get();
 
-        String requesterId = (userId != null && !userId.isBlank())
-                ? userId.trim()
-                : (principal != null ? principal.getName() : null);
+        String requesterId = resolveRequesterId(userId, principal);
         if (run.getOwnerId() != null && !run.getOwnerId().isBlank()) {
             if (requesterId == null) return ResponseEntity.status(401).build();
             if (!run.getOwnerId().equals(requesterId)) return ResponseEntity.status(403).build();
@@ -465,9 +465,7 @@ public class TestRunController {
         if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
         TestRun run = runOpt.get();
 
-        String requesterId = (userId != null && !userId.isBlank())
-                ? userId.trim()
-                : (principal != null ? principal.getName() : null);
+        String requesterId = resolveRequesterId(userId, principal);
         if (run.getOwnerId() != null && !run.getOwnerId().isBlank()) {
             if (requesterId == null) return ResponseEntity.status(401).build();
             if (!run.getOwnerId().equals(requesterId)) return ResponseEntity.status(403).build();
@@ -494,9 +492,7 @@ public class TestRunController {
 
         return testRunRepository.findById(id)
                 .map(run -> {
-                    String requesterId = (userId != null && !userId.isBlank())
-                            ? userId.trim()
-                            : (principal != null ? principal.getName() : null);
+                    String requesterId = resolveRequesterId(userId, principal);
 
                     if (run.getOwnerId() != null && !run.getOwnerId().isBlank()) {
                         if (requesterId == null) {

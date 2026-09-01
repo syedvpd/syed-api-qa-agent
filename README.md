@@ -1,7 +1,7 @@
 # Syed API QA Agent
 
 > **Autonomous, Deterministic API Quality Assurance for Live Deployed Backends**  
-> *Zero LLM Dependency &bull; Production Safety First &bull; Modular Monolith*
+> *Zero LLM Dependency &bull; Production Hardened &bull; Cryptographic Security &bull; Modular Monolith*
 
 ---
 
@@ -18,36 +18,65 @@ Given a live OpenAPI 3.x or Swagger 2.x specification URL, the agent automatical
 6. **Validates** contracts, response schemas, and status codes.
 7. **Isolates** failures without terminating the test run.
 8. **Cleans up** test resources in reverse dependency order.
-9. **Generates** executive HTML reports and professional PDFs.
+9. **Generates** executive HTML reports and professional vector PDFs.
+10. **Tracks Regressions** against historical baselines with latency SLA deltas and contract drift detection.
 
 ---
 
-## 2. Zero LLM Architecture
+## 2. Zero-LLM Architecture
 
-This system has **zero external LLM dependencies** (no OpenAI, no Anthropic, no Gemini, no Ollama, no GPUs, and no AI tokens). All reasoning is governed by deterministic schema analysis, graph theory (Tarjan / Kahn algorithms), state machines, and rule-based diagnostic engines.
+This system has **zero external LLM dependencies** (no OpenAI, no Anthropic, no Gemini, no Ollama, no GPUs, and no AI tokens). All reasoning is governed by deterministic schema analysis, graph theory (Tarjan / Kahn algorithms), finite state machines, and rule-based diagnostic intelligence.
 
 ---
 
-## 3. Technology Stack
+## 3. Production Security & Hardening
 
-- **Backend**: Java 21, Spring Boot 3.3+, Spring Data JPA, Spring Security, Maven.
+- **Cryptographic Token Authentication**: Stateless HMAC-SHA256 Bearer tokens prevent header forgery and impersonation. Client-supplied `X-User-Id` spoofing is strictly prohibited and rejected with HTTP 403.
+- **AES-256-GCM Encryption-at-Rest**: Sensitive credentials (auth tokens, login credentials, session payloads) are encrypted at rest using AES-256-GCM with dynamic initialization vectors.
+- **Anti-DNS Rebinding & IP Pinning**: Single DNS resolution validates IP addresses against private CIDRs, loopbacks, carrier-grade NAT, and cloud metadata (AWS/GCP/Alibaba). Outbound HTTP requests pin directly to the validated IP, eliminating TOCTOU race conditions.
+- **Tenant Isolation**: Server-side ownership enforcement across all runs, schedules, audit trails, and SSE event streams. Regression baselines cannot cross tenants.
+- **Production Safety**: Destructive HTTP `DELETE` operations are disabled by default in `PRODUCTION` mode.
+
+---
+
+## 4. Technology Stack
+
+- **Backend**: Java 21, Spring Boot 3.3.4, Spring Data JPA, Hibernate, Maven.
 - **Frontend**: Next.js 14, TypeScript, Tailwind CSS, Lucide React, Recharts.
-- **Database**: PostgreSQL 16 with Flyway versioned migrations.
-- **Real-Time Streaming**: Server-Sent Events (SSE) via `/api/runs/{id}/stream`.
-- **Testing**: JUnit 5, Testcontainers, WireMock.
+- **Database**: PostgreSQL 16 with Flyway versioned migrations (V1 through V8).
+- **Reporting**: OpenPDF 2.0.3 vector engine & self-contained responsive HTML.
+- **Real-Time Streaming**: Server-Sent Events (SSE) with reconnect resilience.
+- **Testing**: JUnit 5, WireMock 3.9, MockMvc.
 - **Containerization**: Docker, Docker Compose.
 
 ---
 
-## 4. Getting Started
+## 5. Getting Started
 
 ### Prerequisites
 - JDK 21+
 - Apache Maven 3.9+
 - Node.js 20+ & npm
-- Docker & Docker Compose (for containerized deployment)
+- Docker & Docker Compose
 
-### Running Locally
+### Quick Start with Docker Compose
+
+1. Copy and configure environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Launch the full stack:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. Access the services:
+   - Frontend Dashboard: `http://localhost:3000`
+   - Backend REST API: `http://localhost:8080`
+   - Health Check: `http://localhost:8080/api/health`
+
+### Running Locally for Development
 
 1. **Start PostgreSQL**:
    ```bash
@@ -63,34 +92,21 @@ This system has **zero external LLM dependencies** (no OpenAI, no Anthropic, no 
 3. **Run Frontend**:
    ```bash
    cd frontend
-   npm install
    npm run dev
    ```
 
-4. Open `http://localhost:3000` in your browser.
-
 ---
 
-## 5. Architectural Documentation
+## 6. Verification & Test Suite
 
-Comprehensive technical specifications are located in the `docs/` directory:
-- [System Architecture](docs/architecture.md)
-- [Product Requirements](docs/product-requirements.md)
-- [Execution Engine](docs/execution-engine.md)
-- [Dependency Engine](docs/dependency-engine.md)
-- [Production Safety & SSRF](docs/safety.md)
-- [Failure Model & Isolation](docs/failure-model.md)
-- [Performance & Latency](docs/performance.md)
-- [Reporting Engine](docs/reporting.md)
-- [Deployment Guide](docs/deployment.md)
-- [Phase Implementation Plan](docs/phase-plan.md)
-- [Architecture Decisions (ADRs)](docs/decisions.md)
-- [Requirements Traceability Matrix](docs/requirements-traceability.md)
-- [Edge-Case Architecture Review](docs/edge-case-review.md)
-- [Phase 1 Verification Report](docs/phase-1-report.md)
-- [Phase 2 Verification Report](docs/phase-2-report.md)
-- [Phase 3 Verification Report](docs/phase-3-report.md)
-- [Phase 4 Verification Report](docs/phase-4-report.md)
-- [Phase 5 Verification Report](docs/phase-5-report.md)
-- [Phase 6 Verification Report](docs/phase-6-report.md)
-- [Phase 7 Verification Report](docs/phase-7-report.md)
+Run backend test suite (including all regression & security suites):
+```bash
+cd backend
+mvn clean test
+```
+
+Run frontend production build:
+```bash
+cd frontend
+npm run build
+```

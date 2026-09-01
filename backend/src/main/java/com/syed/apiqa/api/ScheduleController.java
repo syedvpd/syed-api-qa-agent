@@ -153,8 +153,10 @@ public class ScheduleController {
     }
 
     private String resolveRequesterId(String userId, Principal principal) {
-        if (userId != null && !userId.isBlank()) return userId.trim();
+        String verified = com.syed.apiqa.security.SecurityContext.getCurrentUserId();
+        if (verified != null && !verified.isBlank()) return verified;
         if (principal != null) return principal.getName();
+        if (userId != null && !userId.isBlank()) return userId.trim();
         return null;
     }
 

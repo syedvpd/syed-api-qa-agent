@@ -38,6 +38,37 @@ class SsrfProtectionGuardTest {
     }
 
     @Test
+    void shouldRejectGoogleCloudMetadata() {
+        SecurityException exception = assertThrows(SecurityException.class, () ->
+                ssrfGuard.validateTargetUrl("http://metadata.google.internal/computeMetadata/v1/"));
+        assertTrue(exception.getMessage().contains("SSRF Guard"));
+    }
+
+    @Test
+    void shouldRejectPrivateIpv4Ranges() {
+        assertThrows(SecurityException.class, () -> ssrfGuard.validateTargetUrl("http://10.0.0.1/api"));
+        assertThrows(SecurityException.class, () -> ssrfGuard.validateTargetUrl("http://192.168.1.1/api"));
+        assertThrows(SecurityException.class, () -> ssrfGuard.validateTargetUrl("http://172.16.0.1/api"));
+    }
+
+    @Test
+    void shouldRejectWildcardAnyLocalAddress() {
+        assertThrows(SecurityException.class, () -> ssrfGuard.validateTargetUrl("http://0.0.0.0/api"));
+    }
+
+    @Test
+    void shouldRejectCarrierGradeNat() {
+        assertThrows(SecurityException.class, () -> ssrfGuard.validateTargetUrl("http://100.64.0.1/api"));
+    }
+
+    @Test
+    void shouldRejectUserInfoUrls() {
+        SecurityException exception = assertThrows(SecurityException.class, () ->
+                ssrfGuard.validateTargetUrl("http://admin:secret@attacker.com/spec.json"));
+        assertTrue(exception.getMessage().contains("userinfo"));
+    }
+
+    @Test
     void shouldRejectNonHttpProtocols() {
         SecurityException exception = assertThrows(SecurityException.class, () ->
                 ssrfGuard.validateTargetUrl("file:///etc/passwd"));
@@ -48,5 +79,15 @@ class SsrfProtectionGuardTest {
     void shouldAcceptValidPublicUrl() {
         assertDoesNotThrow(() ->
                 ssrfGuard.validateTargetUrl("https://petstore.swagger.io/v2/swagger.json"));
+    }
+
+    @Test
+    void shouldReturnPinnedTargetForAntiDnsRebinding() {
+        SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate("https://petstore.swagger.io/v2/swagger.json");
+        assertNotNull(target);
+        assertNotNull(target.pinnedAddress());
+        assertTrue(target.isPinned());
+        assertNotNull(target.pinnedUrl());
+        assertEquals("petstore.swagger.io", target.originalHost());
     }
 }

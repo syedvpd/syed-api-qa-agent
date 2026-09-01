@@ -64,14 +64,18 @@ public class DynamicAuthService {
         }
 
         try {
-            ssrfGuard.validateTargetUrl(loginUrl);
+            SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(loginUrl);
 
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(loginUrl))
+                    .uri(URI.create(target.pinnedUrl()))
                     .timeout(Duration.ofSeconds(15))
                     .header("Content-Type", "application/json; charset=UTF-8")
                     .header("User-Agent", "Syed-API-QA-Agent/1.0")
                     .header("Accept", "application/json");
+
+            if (target.isPinned()) {
+                reqBuilder.header("Host", target.originalHostHeader());
+            }
 
             HttpRequest.BodyPublisher body = (payload != null && !payload.isBlank())
                     ? HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8)
@@ -142,15 +146,19 @@ public class DynamicAuthService {
         }
 
         try {
-            ssrfGuard.validateTargetUrl(refreshUrl);
+            SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(refreshUrl);
 
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(refreshUrl))
+                    .uri(URI.create(target.pinnedUrl()))
                     .timeout(Duration.ofSeconds(15))
                     .header("User-Agent", "Syed-API-QA-Agent/1.0")
                     .header("Accept", "application/json");
 
-            if (currentToken != null) {
+            if (target.isPinned()) {
+                reqBuilder.header("Host", target.originalHostHeader());
+            }
+
+            if (currentToken != null && !currentToken.isBlank()) {
                 reqBuilder.header("Authorization", "Bearer " + currentToken);
             }
 
