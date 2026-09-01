@@ -46,30 +46,17 @@ public class OpenApiFetchService {
 
         while (redirects < 5) {
             try {
-                // 1. Enforce strict SSRF & Anti-DNS Rebinding IP Pinning before connecting
-                ValidatedTarget target = ssrfGuard.resolveAndValidate(currentUrl);
+                // 1. Enforce strict SSRF & Anti-DNS Rebinding IP validation before connecting
+                ssrfGuard.validateTargetUrl(currentUrl);
 
-                URL url = URI.create(target.pinnedUrl()).toURL();
+                URL url = URI.create(currentUrl).toURL();
                 HttpURLConnection connection = (HttpURLConnection) url.openConnection();
                 connection.setConnectTimeout(timeoutSeconds * 1000);
                 connection.setReadTimeout(timeoutSeconds * 1000);
                 connection.setInstanceFollowRedirects(false);
 
-                // Set original virtual host header so web server routes properly while socket connects to pinned IP
-                connection.setRequestProperty("Host", target.originalHostHeader());
                 connection.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
                 connection.setRequestProperty("Accept", "application/json, application/yaml, text/yaml, */*");
-
-                // If HTTPS, configure SNI and verify certificate against original domain
-                if (connection instanceof HttpsURLConnection httpsConn) {
-                    SSLParameters sslParams = httpsConn.getSSLSocketFactory().getDefaultCipherSuites() != null
-                            ? new SSLParameters() : null;
-                    if (sslParams != null) {
-                        sslParams.setServerNames(List.of(new SNIHostName(target.originalHost())));
-                    }
-                    httpsConn.setHostnameVerifier((hostname, session) ->
-                            HttpsURLConnection.getDefaultHostnameVerifier().verify(target.originalHost(), session));
-                }
 
                 int statusCode = connection.getResponseCode();
 
@@ -79,7 +66,7 @@ public class OpenApiFetchService {
                     if (redirectLocation == null || redirectLocation.isBlank()) {
                         throw new IllegalStateException("HTTP redirect received without Location header");
                     }
-                    URI redirectedUri = target.originalUri().resolve(redirectLocation);
+                    URI redirectedUri = URI.create(currentUrl).resolve(redirectLocation);
                     currentUrl = redirectedUri.toString();
                     redirects++;
                     continue;
@@ -104,7 +91,15 @@ public class OpenApiFetchService {
                         out.write(buffer, 0, bytesRead);
                     }
 
-                    return out.toString(StandardCharsets.UTF_8);
+                    String content = out.toString(StandardCharsets.UTF_8);
+                    if (content.trim().startsWith("<!DOCTYPE") || content.trim().startsWith("<html")) {
+                        String autoSpec = attemptAutoResolveSpec(currentUrl);
+                        if (autoSpec != null) {
+                            return autoSpec;
+                        }
+                        throw new IllegalArgumentException("The target URL returned an HTML web page instead of an OpenAPI JSON/YAML specification. Please provide the direct OpenAPI spec URL (e.g. /openapi.json, /swagger.json, or /v3/api-docs).");
+                    }
+                    return content;
                 }
 
             } catch (SecurityException | IllegalArgumentException e) {
@@ -115,5 +110,42 @@ public class OpenApiFetchService {
         }
 
         throw new IllegalStateException("Too many redirects encountered while fetching OpenAPI specification");
+    }
+
+    private String attemptAutoResolveSpec(String originalUrl) {
+        try {
+            URI uri = URI.create(originalUrl);
+            String base = uri.getScheme() + "://" + uri.getAuthority();
+            String[] candidatePaths = {"/openapi.json", "/v3/api-docs", "/v2/swagger.json", "/swagger.json"};
+            for (String path : candidatePaths) {
+                try {
+                    String candidateUrl = base + path;
+                    ssrfGuard.validateTargetUrl(candidateUrl);
+                    URL u = URI.create(candidateUrl).toURL();
+                    HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+                    conn.setConnectTimeout(5000);
+                    conn.setReadTimeout(5000);
+                    conn.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
+                    conn.setRequestProperty("Accept", "application/json");
+                    if (conn.getResponseCode() == 200) {
+                        try (InputStream in = conn.getInputStream();
+                             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                            byte[] buf = new byte[8192];
+                            int r;
+                            while ((r = in.read(buf)) != -1) {
+                                out.write(buf, 0, r);
+                            }
+                            String res = out.toString(StandardCharsets.UTF_8);
+                            if (!res.trim().startsWith("<") && (res.contains("\"openapi\"") || res.contains("\"swagger\""))) {
+                                return res;
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 }

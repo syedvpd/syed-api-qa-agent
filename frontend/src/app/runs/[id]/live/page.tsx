@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Activity, Terminal, FileText, ArrowRight } from "lucide-react";
-import { getApiBaseUrl } from "@/lib/api";
+import { getApiBaseUrl, authenticatedFetch } from "@/lib/api";
 
 interface LogEvent {
   id: string;
@@ -103,12 +103,43 @@ export default function LiveRunPage({ params }: { params: { id: string } }) {
       addLog("ERROR", `Fatal error: ${data.error}`);
     });
 
-    eventSource.onerror = () => {
-      // Reconnect resilience: EventSource will auto-retry in the background
+    // Initial state sync + resilient fallback polling every 3 seconds
+    const syncRunState = async () => {
+      try {
+        const res = await authenticatedFetch(`${apiBase}/api/runs/${params.id}`);
+        if (res.ok) {
+          const run = await res.json();
+          if (run.status) {
+            setStatus(run.status);
+            if (run.status === "COMPLETED") {
+              setCurrentStep("Test execution completed successfully.");
+            } else if (run.status === "FAILED") {
+              setCurrentStep(`Run failed: ${run.errorMessage || "Fatal execution error"}`);
+            } else if (run.status === "RUNNING" || run.status === "EXECUTING") {
+              setCurrentStep("Autonomous test engine is executing contract & regression tests...");
+            } else if (run.status === "DISCOVERING") {
+              setCurrentStep(`Discovering API endpoints from ${run.openapiUrl}...`);
+            } else if (run.status === "PLANNING") {
+              setCurrentStep("Formulating dependency graph and topological test plan...");
+            }
+          }
+          if (run.totalEndpoints) setTotalApis(run.totalEndpoints);
+          if (run.totalTests) setTotalTests(run.totalTests);
+          if (run.passedTests) setPassed(run.passedTests);
+          if (run.failedTests) setFailed(run.failedTests);
+          if (run.blockedTests) setBlocked(run.blockedTests);
+        }
+      } catch (e) {
+        // network sync fallback ignored
+      }
     };
+
+    syncRunState();
+    const pollInterval = setInterval(syncRunState, 3000);
 
     return () => {
       eventSource.close();
+      clearInterval(pollInterval);
     };
   }, [params.id]);
 
@@ -182,6 +213,41 @@ export default function LiveRunPage({ params }: { params: { id: string } }) {
           <Terminal className="h-4 w-4 shrink-0 text-slate-500" />
           <span>{currentStep}</span>
         </div>
+
+        {status === "FAILED" && (
+          <div className="p-4 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs space-y-2">
+            <div className="font-semibold flex items-center space-x-2 text-rose-400">
+              <XCircle className="h-4 w-4 shrink-0" />
+              <span>Execution Terminated</span>
+            </div>
+            <p className="font-mono text-[11px] text-rose-200">{currentStep}</p>
+            <div className="pt-2 flex items-center space-x-3">
+              <Link href="/new-run" className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs">
+                Launch New Run
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {(status === "DISCOVERING" || status === "PLANNING" || status === "EXECUTING") && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-slate-400">
+              <span className="flex items-center space-x-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>Processing live operations...</span>
+              </span>
+              <span>{totalTests > 0 ? `${Math.round(((passed + failed + blocked) / totalTests) * 100)}%` : "Scanning..."}</span>
+            </div>
+            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500"
+                style={{
+                  width: totalTests > 0 ? `${Math.max(5, Math.min(100, Math.round(((passed + failed + blocked) / totalTests) * 100)))}%` : "25%",
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Metrics Row */}

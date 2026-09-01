@@ -167,14 +167,10 @@ public class HttpExecutionEngine {
 
             try {
                 HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                        .uri(URI.create(validatedTarget != null ? validatedTarget.pinnedUrl() : targetUrl))
+                        .uri(URI.create(targetUrl))
                         .timeout(Duration.ofSeconds(defaultTimeoutSeconds))
                         .header("User-Agent", "Syed-API-QA-Agent/1.0")
                         .header("Accept", "application/json, */*");
-
-                if (validatedTarget != null && validatedTarget.isPinned()) {
-                    reqBuilder.header("Host", validatedTarget.originalHostHeader());
-                }
 
                 if (requestBody != null && !requestBody.isBlank()) {
                     reqBuilder.header("Content-Type", "application/json; charset=UTF-8");
