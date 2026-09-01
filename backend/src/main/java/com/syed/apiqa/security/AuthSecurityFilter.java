@@ -43,6 +43,9 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+        if (org.springframework.web.cors.CorsUtils.isPreFlightRequest(request) || "OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
         String path = request.getRequestURI();
         // Public endpoints that do not require authentication
         return path.equals("/api/health") || path.startsWith("/api/auth/") || !path.startsWith("/api/");

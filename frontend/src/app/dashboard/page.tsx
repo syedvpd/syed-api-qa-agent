@@ -16,7 +16,7 @@ import {
   Cpu,
   RefreshCw
 } from "lucide-react";
-import { getApiBaseUrl } from "@/lib/api";
+import { getApiBaseUrl, authenticatedFetch } from "@/lib/api";
 
 export default function DashboardPage() {
   const [runs, setRuns] = useState<any[]>([]);
@@ -26,8 +26,8 @@ export default function DashboardPage() {
   useEffect(() => {
     const apiBase = getApiBaseUrl();
     Promise.all([
-      fetch(`${apiBase}/api/runs`).then((res) => (res.ok ? res.json() : [])),
-      fetch(`${apiBase}/api/schedules`).then((res) => (res.ok ? res.json() : []))
+      authenticatedFetch(`${apiBase}/api/runs`).then((res) => (res.ok ? res.json() : [])),
+      authenticatedFetch(`${apiBase}/api/schedules`).then((res) => (res.ok ? res.json() : []))
     ])
       .then(([runsData, schedulesData]) => {
         setRuns(runsData || []);

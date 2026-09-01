@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PlayCircle, ShieldCheck, AlertCircle, Info } from "lucide-react";
-import { getApiBaseUrl } from "@/lib/api";
+import { getApiBaseUrl, authenticatedFetch } from "@/lib/api";
 
 export default function NewRunPage() {
   const [openapiUrl, setOpenapiUrl] = useState("");
@@ -19,21 +19,26 @@ export default function NewRunPage() {
 
     const apiBase = getApiBaseUrl();
     try {
-      const res = await fetch(`${apiBase}/api/runs`, {
+      const res = await authenticatedFetch(`${apiBase}/api/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           openapiUrl,
           environmentType,
           authType,
+          authToken: authToken || undefined,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        setStatusMsg(`Error: ${data.error || "Failed to register test run"}`);
+        setStatusMsg(`Error: ${data.error || data.message || "Failed to register test run"}`);
       } else {
-        setStatusMsg(`Success: TestRun registered (ID: ${data.runId}). Full execution engine running.`);
+        const runId = data.id || data.runId;
+        setStatusMsg(`Success: TestRun registered (ID: ${runId}). Full execution engine running.`);
+        if (runId) {
+          window.location.href = `/runs/${runId}/live`;
+        }
       }
     } catch (err: any) {
       setStatusMsg(`Connection note: Backend API reachable at ${apiBase} (${err.message}).`);

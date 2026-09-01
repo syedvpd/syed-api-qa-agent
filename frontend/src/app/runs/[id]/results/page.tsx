@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, ShieldAlert, Activity, FileText, ArrowRight } from "lucide-react";
-import { getApiBaseUrl } from "@/lib/api";
+import { getApiBaseUrl, authenticatedFetch } from "@/lib/api";
 
 export default function RunResultsPage({ params }: { params: { id: string } }) {
   const [cases, setCases] = useState<any[]>([]);
@@ -14,7 +14,7 @@ export default function RunResultsPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     const apiBase = getApiBaseUrl();
-    fetch(`${apiBase}/api/runs/${params.id}/cases`)
+    authenticatedFetch(`${apiBase}/api/runs/${params.id}/cases`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         setCases(data);
@@ -22,7 +22,7 @@ export default function RunResultsPage({ params }: { params: { id: string } }) {
       })
       .catch(() => setLoading(false));
 
-    fetch(`${apiBase}/api/runs/${params.id}/coverage`)
+    authenticatedFetch(`${apiBase}/api/runs/${params.id}/coverage`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setCoverage(data))
       .catch(() => {});

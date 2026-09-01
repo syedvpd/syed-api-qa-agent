@@ -10,7 +10,7 @@ import java.util.Arrays;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    @Value("${syed.security.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}")
+    @Value("${syed.security.allowed-origins:https://*.vercel.app,https://syed-api-agent.vercel.app,http://localhost:3000,http://127.0.0.1:3000}")
     private String allowedOrigins;
 
     @Override
