@@ -219,4 +219,68 @@ public class ProductionSecurityIntegrationTest {
         // Verify that in-memory entity decrypts transparently
         assertEquals(rawPassword, saved.getAuthLoginPayload());
     }
+
+    @Test
+    void userCannotAccessOtherUsersSchedule() throws Exception {
+        TestSchedule bobSchedule = new TestSchedule(
+                "user-bob", "Bob Schedule", "https://petstore.swagger.io/v2/swagger.json",
+                "STAGING", TestSchedule.ScheduleType.DAILY, null
+        );
+        testScheduleRepository.save(bobSchedule);
+
+        // Alice cannot GET Bob's schedule
+        mockMvc.perform(get("/api/schedules/" + bobSchedule.getId())
+                        .header("Authorization", tokenAlice))
+                .andExpect(status().isForbidden());
+
+        // Alice cannot toggle Bob's schedule
+        mockMvc.perform(patch("/api/schedules/" + bobSchedule.getId() + "/toggle")
+                        .header("Authorization", tokenAlice))
+                .andExpect(status().isForbidden());
+
+        // Alice cannot run Bob's schedule
+        mockMvc.perform(post("/api/schedules/" + bobSchedule.getId() + "/run-now")
+                        .header("Authorization", tokenAlice))
+                .andExpect(status().isForbidden());
+
+        // Alice cannot delete Bob's schedule
+        mockMvc.perform(delete("/api/schedules/" + bobSchedule.getId())
+                        .header("Authorization", tokenAlice))
+                .andExpect(status().isForbidden());
+
+        // Bob CAN access Bob's schedule
+        mockMvc.perform(get("/api/schedules/" + bobSchedule.getId())
+                        .header("Authorization", tokenBob))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void userCannotAccessOtherUsersCleanupOrPerformanceData() throws Exception {
+        TestRun runBob = new TestRun(UUID.randomUUID().toString(), "https://petstore.swagger.io/v2/swagger.json", EnvironmentType.STAGING);
+        runBob.setOwnerId("user-bob");
+        testRunRepository.save(runBob);
+
+        // Alice cannot access Bob's cleanup data
+        mockMvc.perform(get("/api/runs/" + runBob.getId() + "/cleanup")
+                        .header("Authorization", tokenAlice))
+                .andExpect(status().isForbidden());
+
+        // Alice cannot access Bob's performance data
+        mockMvc.perform(get("/api/runs/" + runBob.getId() + "/performance")
+                        .header("Authorization", tokenAlice))
+                .andExpect(status().isForbidden());
+
+        // Reverse isolation: Bob cannot access Alice's run
+        TestRun runAlice = new TestRun(UUID.randomUUID().toString(), "https://petstore.swagger.io/v2/swagger.json", EnvironmentType.STAGING);
+        runAlice.setOwnerId("user-alice");
+        testRunRepository.save(runAlice);
+
+        mockMvc.perform(get("/api/runs/" + runAlice.getId() + "/cleanup")
+                        .header("Authorization", tokenBob))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/runs/" + runAlice.getId() + "/performance")
+                        .header("Authorization", tokenBob))
+                .andExpect(status().isForbidden());
+    }
 }

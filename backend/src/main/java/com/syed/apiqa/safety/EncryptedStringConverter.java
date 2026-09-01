@@ -35,7 +35,7 @@ public class EncryptedStringConverter implements AttributeConverter<String, Stri
     static {
         String envKey = System.getenv("SYED_ENCRYPTION_KEY");
         if (envKey == null || envKey.isBlank()) {
-            envKey = System.getProperty("syed.security.encryption-key", "syed-apiqa-production-secret-encryption-key-256bits-v1");
+            envKey = System.getProperty("syed.security.encryption-key", "dev-insecure-encryption-key-change-in-production");
         }
         try {
             MessageDigest sha256 = MessageDigest.getInstance("SHA-256");

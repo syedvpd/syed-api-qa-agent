@@ -36,8 +36,8 @@ services:
       SYED_SAFETY_SSRF_PROTECTION_ENABLED: "true"
       SYED_SAFETY_PRODUCTION_DELETE_ENABLED: "false"
       SYED_SECURITY_AUTH_ENABLED: "true"
-      SYED_AUTH_SECRET: ${SYED_AUTH_SECRET:-syed-apiqa-production-jwt-hmac-sha256-master-secret-key-32bytes}
-      SYED_ENCRYPTION_KEY: ${SYED_ENCRYPTION_KEY:-syed-apiqa-production-secret-encryption-key-256bits-v1}
+      SYED_AUTH_SECRET: ${SYED_AUTH_SECRET:-dev-insecure-auth-secret-change-in-production-32b}
+      SYED_ENCRYPTION_KEY: ${SYED_ENCRYPTION_KEY:-dev-insecure-encryption-key-change-in-production}
     ports:
       - "8080:8080"
 
@@ -45,12 +45,14 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     container_name: syed-apiqa-frontend
     restart: unless-stopped
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     ports:
       - "3000:3000"
 
