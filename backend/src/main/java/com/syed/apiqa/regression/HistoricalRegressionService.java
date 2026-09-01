@@ -64,6 +64,11 @@ public class HistoricalRegressionService {
                     .filter(r -> !r.getId().equals(currentRun.getId()))
                     .filter(r -> r.getStatus() == RunStatus.COMPLETED)
                     .filter(r -> currentRun.getOpenapiUrl() != null && currentRun.getOpenapiUrl().equalsIgnoreCase(r.getOpenapiUrl()))
+                    .filter(r -> {
+                        // Enforce tenant isolation: only compare within same owner
+                        if (currentRun.getOwnerId() == null || currentRun.getOwnerId().isBlank()) return true;
+                        return currentRun.getOwnerId().equals(r.getOwnerId());
+                    })
                     .findFirst()
                     .orElse(null);
         }

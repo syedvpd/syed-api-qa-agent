@@ -71,15 +71,29 @@ public class TestRunController {
     }
 
     @GetMapping
-    public ResponseEntity<List<TestRun>> listRuns() {
-        return ResponseEntity.ok(testRunRepository.findByOrderByCreatedAtDesc());
+    public ResponseEntity<List<TestRun>> listRuns(
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        String requesterId = resolveRequesterId(userId, principal);
+        List<TestRun> runs = testRunRepository.findByOrderByCreatedAtDesc();
+        if (requesterId != null && !requesterId.isBlank()) {
+            runs = runs.stream()
+                    .filter(r -> r.getOwnerId() == null || r.getOwnerId().isBlank() || r.getOwnerId().equals(requesterId))
+                    .collect(java.util.stream.Collectors.toList());
+        }
+        return ResponseEntity.ok(runs);
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<TestRun> getRun(@PathVariable String id) {
-        return testRunRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<?> getRun(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        TestRun run = runOpt.get();
+        ResponseEntity<?> authCheck = checkOwnership(run, userId, principal);
+        if (authCheck != null) return authCheck;
+        return ResponseEntity.ok(run);
     }
 
     @PostMapping
@@ -231,18 +245,58 @@ public class TestRunController {
         return null;
     }
 
+    /**
+     * Centralized ownership check. Returns a non-null ResponseEntity if access is denied.
+     * Returns null if access is permitted.
+     */
+    private ResponseEntity<?> checkOwnership(TestRun run, String userId, java.security.Principal principal) {
+        if (run.getOwnerId() != null && !run.getOwnerId().isBlank()) {
+            String requesterId = resolveRequesterId(userId, principal);
+            if (requesterId == null) return ResponseEntity.status(401).build();
+            if (!run.getOwnerId().equals(requesterId)) return ResponseEntity.status(403).build();
+        }
+        return null;
+    }
+
     @GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamEvents(@PathVariable String id) {
+    public SseEmitter streamEvents(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isPresent()) {
+            TestRun run = runOpt.get();
+            if (run.getOwnerId() != null && !run.getOwnerId().isBlank()) {
+                String requesterId = resolveRequesterId(userId, principal);
+                if (requesterId == null || !run.getOwnerId().equals(requesterId)) {
+                    SseEmitter rejected = new SseEmitter(0L);
+                    rejected.completeWithError(new SecurityException("Access denied"));
+                    return rejected;
+                }
+            }
+        }
         return sseEventService.subscribe(id);
     }
 
     @GetMapping("/{id}/endpoints")
-    public ResponseEntity<List<ApiEndpoint>> getEndpoints(@PathVariable String id) {
+    public ResponseEntity<?> getEndpoints(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
         return ResponseEntity.ok(apiEndpointRepository.findByTestRunId(id));
     }
 
     @GetMapping("/{id}/cases")
-    public ResponseEntity<List<Map<String, Object>>> getCasesWithSteps(@PathVariable String id) {
+    public ResponseEntity<?> getCasesWithSteps(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
+
         List<TestCase> cases = testCaseRepository.findByTestRunIdOrderByExecutionOrderAsc(id);
         List<Map<String, Object>> result = new ArrayList<>();
 
@@ -268,9 +322,12 @@ public class TestRunController {
         }
 
         String requesterId = resolveRequesterId(userId, principal);
-        if (run.getOwnerId() != null && !run.getOwnerId().equals(requesterId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(Map.of("error", "Access denied: Unauthorized to inspect coverage for this test run"));
+        if (run.getOwnerId() != null && !run.getOwnerId().isBlank()) {
+            if (requesterId == null) return ResponseEntity.status(401).build();
+            if (!run.getOwnerId().equals(requesterId)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "Access denied: Unauthorized to inspect coverage for this test run"));
+            }
         }
 
         List<com.syed.apiqa.domain.EndpointCoverage> coverages = endpointCoverageRepository.findByTestRunIdOrderByPathAsc(id);
@@ -282,7 +339,13 @@ public class TestRunController {
     }
 
     @GetMapping("/{id}/report")
-    public ResponseEntity<?> getReport(@PathVariable String id) {
+    public ResponseEntity<?> getReport(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
         return reportRepository.findByTestRunId(id)
                 .map(r -> ResponseEntity.ok()
                         .contentType(MediaType.TEXT_HTML)
@@ -291,7 +354,13 @@ public class TestRunController {
     }
 
     @GetMapping("/{id}/report/summary")
-    public ResponseEntity<?> getReportSummary(@PathVariable String id) {
+    public ResponseEntity<?> getReportSummary(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
         return reportRepository.findByTestRunId(id)
                 .map(r -> ResponseEntity.ok(Map.of(
                         "reportId", r.getId(),
@@ -302,12 +371,24 @@ public class TestRunController {
     }
 
     @GetMapping("/{id}/cleanup")
-    public ResponseEntity<List<CleanupRecord>> getCleanupRecords(@PathVariable String id) {
+    public ResponseEntity<?> getCleanupRecords(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
         return ResponseEntity.ok(cleanupRecordRepository.findByTestRunIdOrderByExecutionOrderDesc(id));
     }
 
     @GetMapping("/{id}/performance")
-    public ResponseEntity<List<PerformanceMetric>> getPerformanceMetrics(@PathVariable String id) {
+    public ResponseEntity<?> getPerformanceMetrics(@PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
         return ResponseEntity.ok(performanceMetricRepository.findByTestRunId(id));
     }
 
@@ -361,7 +442,7 @@ public class TestRunController {
 
         // Verify baseline run ownership as well
         TestRun baselineRun = baselineOpt.get();
-        if (baselineRun.getOwnerId() != null && baselineRun.getOwnerId().isBlank()) {
+        if (baselineRun.getOwnerId() != null && !baselineRun.getOwnerId().isBlank()) {
             if (requesterId == null || !baselineRun.getOwnerId().equals(requesterId)) {
                 return ResponseEntity.status(403).body(Map.of("error", "Cannot compare with baseline owned by another user."));
             }

@@ -16,8 +16,8 @@ public class HealthController {
         return ResponseEntity.ok(Map.of(
                 "status", "UP",
                 "service", "Syed API QA Agent",
-                "version", "0.1.0-SNAPSHOT",
-                "phase", "PHASE_0_FOUNDATION",
+                "version", "1.0.0",
+                "phase", "PRODUCTION_HARDENED",
                 "llmDependency", "ZERO_LLM_DETERMINISTIC_ENGINE",
                 "timestamp", System.currentTimeMillis()
         ));

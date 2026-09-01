@@ -1,5 +1,6 @@
 package com.syed.apiqa.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -38,6 +39,7 @@ public class TestSchedule {
     @Column(name = "auth_type", length = 32)
     private String authType = "NONE";
 
+    @JsonIgnore  // Security: Never serialize auth tokens in API responses
     @Column(name = "auth_token", length = 1024)
     private String authToken;
 

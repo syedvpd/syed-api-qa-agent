@@ -53,7 +53,7 @@ export default function RootLayout({
 
         <footer className="border-t border-slate-800/80 py-6 text-center text-xs text-slate-500">
           <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
-            <span>Syed API QA Agent &bull; Production Architecture &bull; Phase 0 Foundation</span>
+            <span>Syed API QA Agent &bull; Production Architecture &bull; Zero-LLM Deterministic Engine</span>
             <div className="flex items-center space-x-4">
               <span className="flex items-center space-x-1">
                 <Terminal className="h-3 w-3 text-emerald-400" />

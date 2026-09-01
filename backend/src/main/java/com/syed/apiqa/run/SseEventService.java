@@ -56,6 +56,9 @@ public class SseEventService {
         return emitter;
     }
 
+    private static final Set<String> TERMINAL_EVENTS = Set.of(
+            "RUN_COMPLETED", "RUN_FAILED", "RUN_TIMED_OUT", "RUN_CANCELLED");
+
     public void publishEvent(String testRunId, String eventType, Map<String, Object> payload) {
         Map<String, Object> eventData = new HashMap<>(payload);
         eventData.put("eventType", eventType);
@@ -69,7 +72,13 @@ public class SseEventService {
         }
 
         List<SseEmitter> emitters = emittersByRunId.get(testRunId);
-        if (emitters == null || emitters.isEmpty()) return;
+        if (emitters == null || emitters.isEmpty()) {
+            // If terminal and no subscribers, evict backlog immediately to free memory
+            if (TERMINAL_EVENTS.contains(eventType)) {
+                eventBacklogByRunId.remove(testRunId);
+            }
+            return;
+        }
 
         List<SseEmitter> deadEmitters = new ArrayList<>();
         for (SseEmitter emitter : emitters) {
@@ -83,6 +92,16 @@ public class SseEventService {
         }
 
         emitters.removeAll(deadEmitters);
+
+        // Evict backlog on terminal events to prevent memory leak
+        if (TERMINAL_EVENTS.contains(eventType)) {
+            // Schedule deferred cleanup to allow final reconnects
+            new Thread(() -> {
+                try { Thread.sleep(60_000); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                eventBacklogByRunId.remove(testRunId);
+                emittersByRunId.remove(testRunId);
+            }, "sse-cleanup-" + testRunId).start();
+        }
     }
 
     private void removeEmitter(String testRunId, SseEmitter emitter) {

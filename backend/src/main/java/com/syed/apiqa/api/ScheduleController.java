@@ -17,7 +17,6 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/schedules")
-@CrossOrigin(origins = "*")
 public class ScheduleController {
 
     private final TestScheduleRepository scheduleRepository;

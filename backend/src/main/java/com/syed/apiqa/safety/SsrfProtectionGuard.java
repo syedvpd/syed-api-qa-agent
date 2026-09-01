@@ -49,6 +49,11 @@ public class SsrfProtectionGuard {
             throw new SecurityException("Blocked insecure protocol: " + scheme + ". Only HTTP and HTTPS are permitted.");
         }
 
+        // Block userinfo in URL (e.g. http://user@evil.com, http://admin:pass@169.254.169.254)
+        if (uri.getUserInfo() != null || urlString.contains("@")) {
+            throw new SecurityException("SSRF Guard: URLs with userinfo (@) are blocked.");
+        }
+
         String host = uri.getHost();
         if (host == null || host.isBlank()) {
             throw new IllegalArgumentException("Target URL does not contain a valid host: " + urlString);
@@ -69,6 +74,9 @@ public class SsrfProtectionGuard {
                 }
                 if (address.isLinkLocalAddress()) {
                     throw new SecurityException("SSRF Guard: Link-local target blocked: " + address.getHostAddress());
+                }
+                if (address.isAnyLocalAddress()) {
+                    throw new SecurityException("SSRF Guard: Wildcard/any-local address blocked: " + address.getHostAddress());
                 }
                 if (isCloudMetadataAddress(address)) {
                     throw new SecurityException("SSRF Guard: Cloud metadata IP blocked: " + address.getHostAddress());

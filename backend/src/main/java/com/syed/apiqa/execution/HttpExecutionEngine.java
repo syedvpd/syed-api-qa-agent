@@ -340,6 +340,11 @@ public class HttpExecutionEngine {
         }
     }
 
+    private static final Set<String> SENSITIVE_KEYS = Set.of(
+            "password", "token", "secret", "api_key", "apikey", "access_token",
+            "cookie", "authorization", "refresh_token", "session", "csrf",
+            "private_key", "client_secret", "credentials", "auth_token");
+
     private void extractAndStoreVariables(String jsonBody, TestStep step, ExecutionContext context, Execution execution) {
         try {
             JsonNode root = objectMapper.readTree(jsonBody);
@@ -351,6 +356,9 @@ public class HttpExecutionEngine {
                     Map.Entry<String, JsonNode> field = fields.next();
                     String key = field.getKey();
                     JsonNode val = field.getValue();
+
+                    // Skip sensitive fields to prevent storing credentials in DB
+                    if (SENSITIVE_KEYS.contains(key.toLowerCase())) continue;
 
                     if (val.isValueNode() && !val.isNull()) {
                         String valueStr = val.asText();
