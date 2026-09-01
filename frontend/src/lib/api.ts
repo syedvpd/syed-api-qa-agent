@@ -7,7 +7,7 @@
  */
 export function getApiBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
+    return process.env.NEXT_PUBLIC_API_URL.trim().replace(/\/+$/, "");
   }
   if (typeof window !== "undefined") {
     // If running on custom domain in production, use origin
