@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { PlayCircle, ShieldCheck, AlertCircle, Info } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api";
 
 export default function NewRunPage() {
   const [openapiUrl, setOpenapiUrl] = useState("");
-  const [environmentType, setEnvironmentType] = useState("STAGING");
+  const [environmentType, setEnvironmentType] = useState("LOCAL");
   const [authType, setAuthType] = useState("NONE");
   const [authToken, setAuthToken] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -16,8 +17,9 @@ export default function NewRunPage() {
     setIsSubmitting(true);
     setStatusMsg(null);
 
+    const apiBase = getApiBaseUrl();
     try {
-      const res = await fetch("http://localhost:8080/api/runs", {
+      const res = await fetch(`${apiBase}/api/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -31,10 +33,10 @@ export default function NewRunPage() {
       if (!res.ok) {
         setStatusMsg(`Error: ${data.error || "Failed to register test run"}`);
       } else {
-        setStatusMsg(`Success: TestRun registered (ID: ${data.runId}). Note: Full execution engine triggers in Phase 1.`);
+        setStatusMsg(`Success: TestRun registered (ID: ${data.runId}). Full execution engine running.`);
       }
     } catch (err: any) {
-      setStatusMsg(`Connection note: Backend reachable at http://localhost:8080 (${err.message}).`);
+      setStatusMsg(`Connection note: Backend API reachable at ${apiBase} (${err.message}).`);
     } finally {
       setIsSubmitting(false);
     }

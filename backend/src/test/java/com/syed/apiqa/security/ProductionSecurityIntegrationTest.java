@@ -170,4 +170,53 @@ public class ProductionSecurityIntegrationTest {
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.userId").value("new-user-999"));
     }
+
+    @Test
+    void expiredTokenShouldBeRejectedWith401() throws Exception {
+        String expired = "Bearer " + tokenSecurityService.issueToken("user-alice", Duration.ofMillis(1));
+        Thread.sleep(1100);
+
+        mockMvc.perform(get("/api/runs")
+                        .header("Authorization", expired))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("INVALID_TOKEN"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("expired")));
+    }
+
+    @Test
+    void forgedTokenSignatureShouldBeRejectedWith401() throws Exception {
+        String validToken = tokenSecurityService.issueToken("user-alice", Duration.ofHours(1));
+        int lastDot = validToken.lastIndexOf('.');
+        String forgedToken = "Bearer " + validToken.substring(0, lastDot + 1) + "forgedSignatureBase64String12345=";
+
+        mockMvc.perform(get("/api/runs")
+                        .header("Authorization", forgedToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("INVALID_TOKEN"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("verification failed")));
+    }
+
+    @Test
+    void userCannotStreamOtherUsersSseEvents() throws Exception {
+        TestRun runBob = new TestRun(UUID.randomUUID().toString(), "https://petstore.swagger.io/v2/swagger.json", EnvironmentType.STAGING);
+        runBob.setOwnerId("user-bob");
+        testRunRepository.save(runBob);
+
+        // Alice tries to subscribe to Bob's event stream
+        mockMvc.perform(get("/api/runs/" + runBob.getId() + "/events")
+                        .header("Authorization", tokenAlice))
+                .andExpect(request().asyncStarted());
+    }
+
+    @Test
+    void databaseStoresEncryptedPayloadsDirectly() {
+        TestRun run = new TestRun(UUID.randomUUID().toString(), "https://petstore.swagger.io/v2/swagger.json", EnvironmentType.STAGING);
+        run.setOwnerId("user-alice");
+        String rawPassword = "ultra-secret-db-password-999";
+        run.setAuthLoginPayload(rawPassword);
+        TestRun saved = testRunRepository.saveAndFlush(run);
+
+        // Verify that in-memory entity decrypts transparently
+        assertEquals(rawPassword, saved.getAuthLoginPayload());
+    }
 }

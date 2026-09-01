@@ -16,21 +16,15 @@ import {
   Cpu,
   RefreshCw
 } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api";
 
 export default function DashboardPage() {
   const [runs, setRuns] = useState<any[]>([]);
   const [schedulesCount, setSchedulesCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const getApiBase = () => {
-    if (process.env.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
-    }
-    return "http://localhost:8080";
-  };
-
   useEffect(() => {
-    const apiBase = getApiBase();
+    const apiBase = getApiBaseUrl();
     Promise.all([
       fetch(`${apiBase}/api/runs`).then((res) => (res.ok ? res.json() : [])),
       fetch(`${apiBase}/api/schedules`).then((res) => (res.ok ? res.json() : []))

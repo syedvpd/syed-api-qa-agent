@@ -86,11 +86,16 @@ public class DeterministicDataGenerator {
         }
 
         if ("date-time".equalsIgnoreCase(format) || prop.contains("time") || prop.contains("timestamp")) {
-            return OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            // Pure deterministic date-time derived from seeded random (UTC anchor 2024-01-01)
+            long epochSeconds = 1704067200L + (Math.abs(random.nextLong()) % 31536000L);
+            return OffsetDateTime.ofInstant(java.time.Instant.ofEpochSecond(epochSeconds), java.time.ZoneOffset.UTC)
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         }
 
         if ("date".equalsIgnoreCase(format) || prop.contains("date")) {
-            return LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+            // Pure deterministic date derived from seeded random (anchor day 19723 = 2024-01-01)
+            long epochDays = 19723L + (Math.abs(random.nextInt(365)));
+            return LocalDate.ofEpochDay(epochDays).format(DateTimeFormatter.ISO_LOCAL_DATE);
         }
 
         if ("uri".equalsIgnoreCase(format) || "url".equalsIgnoreCase(format) || prop.contains("url")) {
@@ -148,8 +153,22 @@ public class DeterministicDataGenerator {
             count = schema.getMaxItems();
         }
 
+        Boolean uniqueItems = schema.getUniqueItems();
+        Set<Object> seen = (uniqueItems != null && uniqueItems) ? new LinkedHashSet<>() : null;
+
         for (int i = 0; i < count; i++) {
-            list.add(generateValueForSchema(itemsSchema, propertyName + "_item", random, runIdPrefix));
+            Object val = generateValueForSchema(itemsSchema, propertyName + "_item", random, runIdPrefix);
+            if (seen != null) {
+                int attempts = 0;
+                while (seen.contains(val) && attempts < 10) {
+                    val = generateValueForSchema(itemsSchema, propertyName + "_item_" + attempts, random, runIdPrefix);
+                    attempts++;
+                }
+                seen.add(val);
+                list.add(val);
+            } else {
+                list.add(val);
+            }
         }
         return list;
     }

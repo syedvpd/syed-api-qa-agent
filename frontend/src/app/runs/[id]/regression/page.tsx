@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { getApiBaseUrl } from "@/lib/api";
 import {
   ArrowLeft,
   TrendingDown,
@@ -69,15 +70,8 @@ export default function RunRegressionPage({ params }: { params: { id: string } }
   const [comparing, setComparing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const getApiBase = () => {
-    if (process.env.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
-    }
-    return "http://localhost:8080";
-  };
-
   useEffect(() => {
-    const apiBase = getApiBase();
+    const apiBase = getApiBaseUrl();
     setLoading(true);
     setErrorMessage(null);
 
@@ -113,7 +107,7 @@ export default function RunRegressionPage({ params }: { params: { id: string } }
 
   const handleCompare = async () => {
     if (!selectedBaseline) return;
-    const apiBase = getApiBase();
+    const apiBase = getApiBaseUrl();
     setComparing(true);
     setErrorMessage(null);
 

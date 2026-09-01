@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Activity, Terminal, FileText, ArrowRight } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api";
 
 interface LogEvent {
   id: string;
@@ -23,7 +24,8 @@ export default function LiveRunPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     // Connect to backend Server-Sent Events (SSE) stream
-    const eventSource = new EventSource(`http://localhost:8080/api/runs/${params.id}/events`);
+    const apiBase = getApiBaseUrl();
+    const eventSource = new EventSource(`${apiBase}/api/runs/${params.id}/events`);
 
     eventSource.addEventListener("CONNECTED", (e: MessageEvent) => {
       setStatus("STREAMING");

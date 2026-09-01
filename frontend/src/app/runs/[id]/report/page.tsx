@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Download, ShieldCheck, FileText, AlertTriangle, AlertCircle, Loader2 } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api";
 
 export default function RunReportPage({ params }: { params: { id: string } }) {
   const [reportHtml, setReportHtml] = useState<string | null>(null);
@@ -11,15 +12,8 @@ export default function RunReportPage({ params }: { params: { id: string } }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<number | null>(null);
 
-  const getApiBase = () => {
-    if (process.env.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
-    }
-    return "http://localhost:8080";
-  };
-
   useEffect(() => {
-    const apiBase = getApiBase();
+    const apiBase = getApiBaseUrl();
     setLoading(true);
     setErrorMessage(null);
 
@@ -59,7 +53,7 @@ export default function RunReportPage({ params }: { params: { id: string } }) {
   };
 
   const handleDownloadPdf = async () => {
-    const apiBase = getApiBase();
+    const apiBase = getApiBaseUrl();
     setDownloadingPdf(true);
     setErrorMessage(null);
 

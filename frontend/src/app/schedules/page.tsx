@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { getApiBaseUrl } from "@/lib/api";
 import {
   Calendar,
   Clock,
@@ -44,18 +45,11 @@ export default function SchedulesPage() {
   const [formType, setFormType] = useState<"DAILY" | "WEEKLY" | "CUSTOM_CRON">("DAILY");
   const [formCron, setFormCron] = useState("");
 
-  const getApiBase = () => {
-    if (process.env.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
-    }
-    return "http://localhost:8080";
-  };
-
   const loadSchedules = async () => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/schedules`);
+      const res = await fetch(`${getApiBaseUrl()}/api/schedules`);
       if (!res.ok) throw new Error(`Failed to load schedules (HTTP ${res.status})`);
       const data = await res.json();
       setSchedules(data || []);
@@ -79,7 +73,7 @@ export default function SchedulesPage() {
     setSuccessMessage(null);
 
     try {
-      const res = await fetch(`${getApiBase()}/api/schedules`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/schedules`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -111,7 +105,7 @@ export default function SchedulesPage() {
   const handleToggle = async (id: string) => {
     setActionLoading(`toggle-${id}`);
     try {
-      const res = await fetch(`${getApiBase()}/api/schedules/${id}/toggle`, { method: "PATCH" });
+      const res = await fetch(`${getApiBaseUrl()}/api/schedules/${id}/toggle`, { method: "PATCH" });
       if (!res.ok) throw new Error("Failed to toggle schedule");
       loadSchedules();
     } catch (err: any) {
@@ -125,7 +119,7 @@ export default function SchedulesPage() {
     if (!confirm("Are you sure you want to delete this schedule?")) return;
     setActionLoading(`delete-${id}`);
     try {
-      const res = await fetch(`${getApiBase()}/api/schedules/${id}`, { method: "DELETE" });
+      const res = await fetch(`${getApiBaseUrl()}/api/schedules/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete schedule");
       loadSchedules();
     } catch (err: any) {
@@ -139,7 +133,7 @@ export default function SchedulesPage() {
     setActionLoading(`run-${id}`);
     setSuccessMessage(null);
     try {
-      const res = await fetch(`${getApiBase()}/api/schedules/${id}/run-now`, { method: "POST" });
+      const res = await fetch(`${getApiBaseUrl()}/api/schedules/${id}/run-now`, { method: "POST" });
       if (!res.ok) throw new Error("Failed to dispatch scheduled run");
       const data = await res.json();
       setSuccessMessage(`Test Run dispatched immediately: ${data.runId.substring(0, 8)}...`);
