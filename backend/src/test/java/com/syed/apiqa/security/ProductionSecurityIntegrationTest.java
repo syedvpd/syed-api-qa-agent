@@ -76,6 +76,20 @@ public class ProductionSecurityIntegrationTest {
     }
 
     @Test
+    void queryParamTokenShouldAuthenticateSuccessfully() throws Exception {
+        String rawToken = tokenSecurityService.issueToken("user-alice", Duration.ofHours(2));
+        mockMvc.perform(get("/api/runs").param("token", rawToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void invalidQueryParamTokenShouldBeRejectedWith401() throws Exception {
+        mockMvc.perform(get("/api/runs").param("token", "invalid.query.token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("INVALID_TOKEN"));
+    }
+
+    @Test
     void forgedIdentityHeaderMismatchingTokenShouldBeRejectedWith403() throws Exception {
         // Alice provides valid token for Alice, but maliciously attempts to claim X-User-Id: user-bob
         mockMvc.perform(get("/api/runs")

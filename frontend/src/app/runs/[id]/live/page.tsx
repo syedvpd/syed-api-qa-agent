@@ -25,7 +25,13 @@ export default function LiveRunPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     // Connect to backend Server-Sent Events (SSE) stream
     const apiBase = getApiBaseUrl();
-    const eventSource = new EventSource(`${apiBase}/api/runs/${params.id}/events`);
+    const token = typeof window !== "undefined"
+      ? (new URLSearchParams(window.location.search).get("token") || localStorage.getItem("syed_auth_token") || "")
+      : "";
+    const eventsUrl = token
+      ? `${apiBase}/api/runs/${params.id}/events?token=${encodeURIComponent(token)}`
+      : `${apiBase}/api/runs/${params.id}/events`;
+    const eventSource = new EventSource(eventsUrl);
 
     eventSource.addEventListener("CONNECTED", (e: MessageEvent) => {
       setStatus("STREAMING");

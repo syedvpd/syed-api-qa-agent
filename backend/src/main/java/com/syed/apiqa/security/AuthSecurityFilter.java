@@ -53,11 +53,18 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String authHeader = request.getHeader("Authorization");
+        String tokenParam = request.getParameter("token");
         String xUserIdHeader = request.getHeader("X-User-Id");
 
+        String rawToken = null;
+        if (authHeader != null && authHeader.startsWith(BEARER_PREFIX)) {
+            rawToken = authHeader.substring(BEARER_PREFIX.length()).trim();
+        } else if (tokenParam != null && !tokenParam.isBlank()) {
+            rawToken = tokenParam.trim();
+        }
+
         try {
-            if (authHeader != null && authHeader.startsWith(BEARER_PREFIX)) {
-                String rawToken = authHeader.substring(BEARER_PREFIX.length()).trim();
+            if (rawToken != null) {
                 try {
                     String verifiedUserId = tokenSecurityService.validateToken(rawToken);
                     // Prevent forgery: client cannot supply a different X-User-Id than the verified token identity

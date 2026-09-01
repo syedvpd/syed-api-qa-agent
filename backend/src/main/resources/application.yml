@@ -32,5 +32,6 @@ syed:
   security:
     auth-enabled: true
     test-mode: false
+    allowed-origins: ${SYED_SECURITY_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
     auth-secret: ${SYED_AUTH_SECRET:dev-insecure-auth-secret-change-in-production-32b}
     encryption-key: ${SYED_ENCRYPTION_KEY:dev-insecure-encryption-key-change-in-production}
