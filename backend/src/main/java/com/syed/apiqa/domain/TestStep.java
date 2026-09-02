@@ -19,7 +19,7 @@ public class TestStep {
     @JoinColumn(name = "test_case_id", nullable = false)
     private TestCase testCase;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "api_endpoint_id")
     private ApiEndpoint apiEndpoint;
 

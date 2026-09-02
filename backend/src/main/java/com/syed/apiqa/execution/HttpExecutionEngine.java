@@ -14,22 +14,32 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ProtocolException;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpConnectTimeoutException;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.*;
+import javax.net.ssl.SNIHostName;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 
 /**
- * Production-grade HTTP Execution Engine built on modern Java 21 java.net.http.HttpClient.
- * Natively supports all standard HTTP verbs including PATCH, GET, POST, PUT, DELETE,
- * variable substitution, SSRF validation, nanosecond latency measurement,
- * retry safety, rate limiting (429), secret redaction, and variable capture.
+ * Production-grade HTTP Execution Engine with Anti-DNS Rebinding Pinned Connection.
+ * Connects TCP sockets directly to validated pinned IPs, preserving TLS SNI and Host header.
+ * Supports all standard HTTP verbs including PATCH, GET, POST, PUT, DELETE,
+ * variable substitution, SSRF validation, latency measurement, retry safety, rate limiting (429),
+ * secret redaction, and variable capture.
  */
 @Service
 public class HttpExecutionEngine {
@@ -43,7 +53,6 @@ public class HttpExecutionEngine {
     private final AssertionResultRepository assertionResultRepository;
     private final CapturedVariableRepository capturedVariableRepository;
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient;
 
     @Value("${syed.safety.default-timeout-seconds:15}")
     private int defaultTimeoutSeconds;
@@ -65,10 +74,6 @@ public class HttpExecutionEngine {
         this.assertionResultRepository = assertionResultRepository;
         this.capturedVariableRepository = capturedVariableRepository;
         this.objectMapper = objectMapper;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
     }
 
     public static class StepExecutionOutcome {
@@ -162,75 +167,127 @@ public class HttpExecutionEngine {
         OffsetDateTime startedAt = OffsetDateTime.now();
         execution.setStartedAt(startedAt);
 
+        if ("PATCH".equalsIgnoreCase(method)) {
+            while (attempt < maxAttempts) {
+                attempt++;
+                long startNanos = System.nanoTime();
+                try {
+                    return dispatchPinnedRaw(step, targetUrl, validatedTarget, method, requestBody, context, authType, authCredentials, execution, startNanos);
+                } catch (SocketTimeoutException e) {
+                    long latencyMs = Math.max(1, (System.nanoTime() - startNanos) / 1_000_000);
+                    execution.setLatencyMs(latencyMs);
+                    execution.setCompletedAt(OffsetDateTime.now());
+                    execution.setStatus(StepStatus.TIMEOUT);
+                    execution.setErrorType("TIMEOUT");
+                    execution.setErrorDetails("Request timed out after " + attempt + " attempts.");
+                    executionRepository.save(execution);
+                    step.setStatus(StepStatus.TIMEOUT);
+                    step.setFailureReason("Timeout after " + defaultTimeoutSeconds + "s");
+                    return new StepExecutionOutcome(StepStatus.TIMEOUT, execution, Collections.emptyList(), step.getFailureReason());
+                } catch (Exception e) {
+                    log.error("HttpExecutionEngine exception dispatching PATCH to {}: {}", targetUrl, e.getMessage(), e);
+                    long latencyMs = Math.max(1, (System.nanoTime() - startNanos) / 1_000_000);
+                    execution.setLatencyMs(latencyMs);
+                    execution.setCompletedAt(OffsetDateTime.now());
+                    execution.setStatus(StepStatus.NETWORK_ERROR);
+                    execution.setErrorType("NETWORK_ERROR");
+                    execution.setErrorDetails(e.getMessage());
+                    executionRepository.save(execution);
+                    step.setStatus(StepStatus.NETWORK_ERROR);
+                    step.setFailureReason("Network dispatch error: " + e.getMessage());
+                    return new StepExecutionOutcome(StepStatus.NETWORK_ERROR, execution, Collections.emptyList(), step.getFailureReason());
+                }
+            }
+        }
+
         while (attempt < maxAttempts) {
             attempt++;
             long startNanos = System.nanoTime();
 
             try {
-                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                        .uri(URI.create(targetUrl))
-                        .timeout(Duration.ofSeconds(defaultTimeoutSeconds))
-                        .header("User-Agent", "Syed-API-QA-Agent/1.0")
-                        .header("Accept", "application/json, */*");
+                HttpURLConnection connection = com.syed.apiqa.safety.PinnedConnectionManager.openPinnedConnection(validatedTarget, defaultTimeoutSeconds);
+                connection.setInstanceFollowRedirects(false);
+
+                try {
+                    connection.setRequestMethod(method);
+                } catch (ProtocolException pe) {
+                    throw pe;
+                }
+
+                connection.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
+                connection.setRequestProperty("Accept", "application/json, */*");
 
                 if (requestBody != null && !requestBody.isBlank()) {
-                    reqBuilder.header("Content-Type", "application/json; charset=UTF-8");
+                    connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
                 }
 
                 // Inject Authentication
-                applyAuth(reqBuilder, authType, authCredentials);
+                applyAuth(connection, authType, authCredentials);
 
                 // Apply Custom Headers (e.g. If-None-Match, Idempotency-Key)
                 if (step.getRequestHeaders() != null && !step.getRequestHeaders().isBlank()) {
-                    applyCustomHeaders(reqBuilder, step.getRequestHeaders(), context);
+                    applyCustomHeaders(connection, step.getRequestHeaders(), context);
                 }
-
-                // Body Publisher
-                HttpRequest.BodyPublisher bodyPublisher = (requestBody != null && !requestBody.isBlank())
-                        ? HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8)
-                        : HttpRequest.BodyPublishers.noBody();
-
-                if ("GET".equals(method)) {
-                    reqBuilder.GET();
-                } else if ("DELETE".equals(method)) {
-                    reqBuilder.DELETE();
-                } else {
-                    // Modern Java 21 HttpClient natively supports PATCH, POST, PUT, etc.
-                    reqBuilder.method(method, bodyPublisher);
-                }
-
-                HttpRequest httpRequest = reqBuilder.build();
 
                 // Mask and record request headers
-                Map<String, List<String>> rawReqHeaders = httpRequest.headers().map();
+                Map<String, List<String>> rawReqHeaders = connection.getRequestProperties();
                 execution.setRequestHeaders(objectMapper.writeValueAsString(secretMasker.maskHeaders(rawReqHeaders)));
 
+                // Write request body if present
+                boolean hasBody = requestBody != null && !requestBody.isBlank() &&
+                        !"GET".equals(method) && !"HEAD".equals(method) && !"OPTIONS".equals(method);
+                if (hasBody) {
+                    connection.setDoOutput(true);
+                    try (OutputStream os = connection.getOutputStream()) {
+                        os.write(requestBody.getBytes(StandardCharsets.UTF_8));
+                    }
+                }
+
                 // Send request and capture timing
-                HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                int statusCode = connection.getResponseCode();
                 long elapsedNanos = System.nanoTime() - startNanos;
                 long latencyMs = Math.max(1, elapsedNanos / 1_000_000);
                 execution.setLatencyMs(latencyMs);
-                execution.setResponseStatus(response.statusCode());
+                execution.setResponseStatus(statusCode);
 
                 // Record Response Headers (Sanitized)
-                Map<String, List<String>> rawRespHeaders = response.headers().map();
+                Map<String, List<String>> rawRespHeaders = connection.getHeaderFields();
                 execution.setResponseHeaders(objectMapper.writeValueAsString(secretMasker.maskHeaders(rawRespHeaders)));
 
                 // Handle 429 Too Many Requests (Rate Limiting)
-                if (response.statusCode() == 429 && attempt < maxAttempts) {
-                    Optional<String> retryAfterOpt = response.headers().firstValue("Retry-After");
+                if (statusCode == 429 && attempt < maxAttempts) {
+                    String retryAfterOpt = connection.getHeaderField("Retry-After");
                     int sleepSec = 1;
-                    if (retryAfterOpt.isPresent()) {
-                        try { sleepSec = Math.min(3, Integer.parseInt(retryAfterOpt.get().trim())); } catch (Exception ignored) {}
+                    if (retryAfterOpt != null) {
+                        try { sleepSec = Math.min(3, Integer.parseInt(retryAfterOpt.trim())); } catch (Exception ignored) {}
                     }
                     Thread.sleep(sleepSec * 1000L);
                     continue;
                 }
 
                 // Response body (bounded)
-                String rawBody = response.body();
-                if (rawBody != null && rawBody.length() > maxResponseSizeBytes) {
-                    rawBody = rawBody.substring(0, maxResponseSizeBytes) + "\n[RESPONSE TRUNCATED - EXCEEDED 2MB LIMIT]";
+                InputStream in = (statusCode >= 200 && statusCode < 400) ? connection.getInputStream() : connection.getErrorStream();
+                String rawBody = "";
+                if (in != null) {
+                    try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        int total = 0;
+                        boolean truncated = false;
+                        while ((n = in.read(buf)) != -1) {
+                            total += n;
+                            if (total > maxResponseSizeBytes) {
+                                baos.write(buf, 0, n);
+                                truncated = true;
+                                break;
+                            }
+                            baos.write(buf, 0, n);
+                        }
+                        rawBody = baos.toString(StandardCharsets.UTF_8);
+                        if (truncated) {
+                            rawBody += "\n[RESPONSE TRUNCATED - EXCEEDED 2MB LIMIT]";
+                        }
+                    }
                 }
                 execution.setResponseBody(secretMasker.maskBody(rawBody));
                 execution.setCompletedAt(OffsetDateTime.now());
@@ -238,13 +295,21 @@ public class HttpExecutionEngine {
                 // Evaluate Assertions
                 List<AssertionResult> assertions = assertionEngine.evaluateAssertions(execution, step.getExpectedStatus(), "application/json");
                 boolean allPassed = assertions.stream().allMatch(AssertionResult::isPassed);
+                if (!allPassed) {
+                    for (AssertionResult ar : assertions) {
+                        if (!ar.isPassed()) {
+                            log.error("ASSERTION FAILED for step {} {}: status={} body={} target={} msg={}",
+                                    method, step.getPathTemplate(), statusCode, rawBody, ar.getTargetField(), ar.getMessage());
+                        }
+                    }
+                }
 
                 StepStatus finalStatus;
-                if (response.statusCode() == 429) {
+                if (statusCode == 429) {
                     finalStatus = StepStatus.RATE_LIMITED;
-                } else if (response.statusCode() == 401) {
+                } else if (statusCode == 401) {
                     finalStatus = StepStatus.AUTHENTICATION_ERROR;
-                } else if (response.statusCode() == 403) {
+                } else if (statusCode == 403) {
                     finalStatus = StepStatus.AUTHORIZATION_ERROR;
                 } else if (allPassed) {
                     finalStatus = StepStatus.PASSED;
@@ -254,16 +319,16 @@ public class HttpExecutionEngine {
                 execution.setStatus(finalStatus);
 
                 // Extract ETag header for conditional request testing
-                Optional<String> etagHeader = response.headers().firstValue("ETag");
-                if (etagHeader.isEmpty()) etagHeader = response.headers().firstValue("etag");
-                etagHeader.ifPresent(tag -> {
-                    context.setVariable("etag", tag);
+                String etagHeader = connection.getHeaderField("ETag");
+                if (etagHeader == null) etagHeader = connection.getHeaderField("etag");
+                if (etagHeader != null) {
+                    context.setVariable("etag", etagHeader);
                     String entity = extractEntityPrefix(step.getPathTemplate());
-                    context.setVariable(entity + ".etag", tag);
-                });
+                    context.setVariable(entity + ".etag", etagHeader);
+                }
 
                 // Extract Variables from successful response payload
-                if (finalStatus == StepStatus.PASSED && rawBody != null && !rawBody.isBlank()) {
+                if (finalStatus == StepStatus.PASSED && !rawBody.isBlank()) {
                     extractAndStoreVariables(rawBody, step, context, execution);
                 }
 
@@ -276,7 +341,7 @@ public class HttpExecutionEngine {
                 step.setStatus(finalStatus);
                 return new StepExecutionOutcome(finalStatus, execution, assertions, null);
 
-            } catch (HttpTimeoutException e) {
+            } catch (SocketTimeoutException e) {
                 long latencyMs = Math.max(1, (System.nanoTime() - startNanos) / 1_000_000);
                 execution.setLatencyMs(latencyMs);
                 execution.setCompletedAt(OffsetDateTime.now());
@@ -324,21 +389,21 @@ public class HttpExecutionEngine {
         return new StepExecutionOutcome(StepStatus.FAILED, execution, Collections.emptyList(), "Execution failed after maximum retries");
     }
 
-    private void applyAuth(HttpRequest.Builder reqBuilder, String authType, String credentials) {
+    private void applyAuth(HttpURLConnection connection, String authType, String credentials) {
         if (authType == null || credentials == null || credentials.isBlank() || "NONE".equalsIgnoreCase(authType)) {
             return;
         }
 
         switch (authType.toUpperCase()) {
             case "BEARER":
-                reqBuilder.header("Authorization", "Bearer " + credentials.trim());
+                connection.setRequestProperty("Authorization", "Bearer " + credentials.trim());
                 break;
             case "API_KEY":
-                reqBuilder.header("X-Api-Key", credentials.trim());
+                connection.setRequestProperty("X-Api-Key", credentials.trim());
                 break;
             case "BASIC":
                 String encoded = Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
-                reqBuilder.header("Authorization", "Basic " + encoded);
+                connection.setRequestProperty("Authorization", "Basic " + encoded);
                 break;
         }
     }
@@ -402,7 +467,7 @@ public class HttpExecutionEngine {
         return "entity";
     }
 
-    private void applyCustomHeaders(HttpRequest.Builder reqBuilder, String customHeaders, ExecutionContext context) {
+    private void applyCustomHeaders(HttpURLConnection connection, String customHeaders, ExecutionContext context) {
         if (customHeaders == null || customHeaders.isBlank()) return;
         try {
             if (customHeaders.trim().startsWith("{")) {
@@ -412,7 +477,7 @@ public class HttpExecutionEngine {
                     while (fields.hasNext()) {
                         Map.Entry<String, JsonNode> field = fields.next();
                         String val = context.resolve(field.getValue().asText()).getResolvedContent();
-                        reqBuilder.header(field.getKey(), val);
+                        connection.setRequestProperty(field.getKey(), val);
                     }
                 }
             } else {
@@ -421,10 +486,243 @@ public class HttpExecutionEngine {
                     if (colon > 0) {
                         String key = line.substring(0, colon).trim();
                         String val = context.resolve(line.substring(colon + 1).trim()).getResolvedContent();
-                        reqBuilder.header(key, val);
+                        connection.setRequestProperty(key, val);
                     }
                 }
             }
         } catch (Exception ignored) {}
+    }
+
+    private StepExecutionOutcome dispatchPinnedRaw(TestStep step,
+                                                   String targetUrl,
+                                                   SsrfProtectionGuard.ValidatedTarget validatedTarget,
+                                                   String method,
+                                                   String requestBody,
+                                                   ExecutionContext context,
+                                                   String authType,
+                                                   String authCredentials,
+                                                   Execution execution,
+                                                   long startNanos) throws Exception {
+
+        String scheme = validatedTarget.originalUri().getScheme();
+        boolean isHttps = "https".equalsIgnoreCase(scheme);
+        int port = validatedTarget.port() > 0 ? validatedTarget.port() : (isHttps ? 443 : 80);
+
+        InetAddress connectAddress = (validatedTarget.pinnedAddress() != null)
+                ? validatedTarget.pinnedAddress()
+                : InetAddress.getByName(validatedTarget.originalHost());
+
+        Socket rawSocket = new Socket();
+        rawSocket.connect(new InetSocketAddress(connectAddress, port), defaultTimeoutSeconds * 1000);
+        rawSocket.setSoTimeout(defaultTimeoutSeconds * 1000);
+
+        Socket socket;
+        if (isHttps) {
+            SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            SSLSocket sslSocket = (SSLSocket) factory.createSocket(
+                    rawSocket,
+                    validatedTarget.originalHost(),
+                    port,
+                    true
+            );
+            SSLParameters params = sslSocket.getSSLParameters();
+            params.setServerNames(Collections.singletonList(new SNIHostName(validatedTarget.originalHost())));
+            sslSocket.setSSLParameters(params);
+            sslSocket.startHandshake();
+            socket = sslSocket;
+        } else {
+            socket = rawSocket;
+        }
+
+        try (socket) {
+            String path = validatedTarget.originalUri().getRawPath();
+            if (path == null || path.isEmpty()) path = "/";
+            if (validatedTarget.originalUri().getRawQuery() != null) {
+                path += "?" + validatedTarget.originalUri().getRawQuery();
+            }
+
+            byte[] bodyBytes = (requestBody != null && !requestBody.isBlank())
+                    ? requestBody.getBytes(StandardCharsets.UTF_8)
+                    : new byte[0];
+
+            StringBuilder req = new StringBuilder();
+            req.append(method).append(" ").append(path).append(" HTTP/1.1\r\n");
+            req.append("Host: ").append(validatedTarget.originalHostHeader()).append("\r\n");
+            req.append("User-Agent: Syed-API-QA-Agent/1.0\r\n");
+            req.append("Accept: application/json, */*\r\n");
+            req.append("Connection: close\r\n");
+
+            if (bodyBytes.length > 0) {
+                req.append("Content-Type: application/json; charset=UTF-8\r\n");
+                req.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
+            }
+
+            // Auth
+            if (authType != null && authCredentials != null && !authCredentials.isBlank() && !"NONE".equalsIgnoreCase(authType)) {
+                switch (authType.toUpperCase()) {
+                    case "BEARER":
+                        req.append("Authorization: Bearer ").append(authCredentials.trim()).append("\r\n");
+                        break;
+                    case "API_KEY":
+                        req.append("X-Api-Key: ").append(authCredentials.trim()).append("\r\n");
+                        break;
+                    case "BASIC":
+                        String encoded = Base64.getEncoder().encodeToString(authCredentials.getBytes(StandardCharsets.UTF_8));
+                        req.append("Authorization: Basic ").append(encoded).append("\r\n");
+                        break;
+                }
+            }
+
+            // Custom headers
+            if (step.getRequestHeaders() != null && !step.getRequestHeaders().isBlank()) {
+                String headersStr = step.getRequestHeaders().trim();
+                if (headersStr.startsWith("{")) {
+                    JsonNode root = objectMapper.readTree(headersStr);
+                    if (root.isObject()) {
+                        Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
+                        while (fields.hasNext()) {
+                            Map.Entry<String, JsonNode> f = fields.next();
+                            String val = context.resolve(f.getValue().asText()).getResolvedContent();
+                            req.append(f.getKey()).append(": ").append(val).append("\r\n");
+                        }
+                    }
+                } else {
+                    for (String line : headersStr.split("\n")) {
+                        int colon = line.indexOf(':');
+                        if (colon > 0) {
+                            String key = line.substring(0, colon).trim();
+                            String val = context.resolve(line.substring(colon + 1).trim()).getResolvedContent();
+                            req.append(key).append(": ").append(val).append("\r\n");
+                        }
+                    }
+                }
+            }
+            req.append("\r\n");
+
+            OutputStream out = socket.getOutputStream();
+            out.write(req.toString().getBytes(StandardCharsets.UTF_8));
+            if (bodyBytes.length > 0) {
+                out.write(bodyBytes);
+            }
+            out.flush();
+
+            // Read Response
+            InputStream in = socket.getInputStream();
+            String statusLine = readLine(in);
+            int statusCode = 200;
+            if (statusLine != null) {
+                String[] parts = statusLine.split(" ");
+                if (parts.length >= 2) {
+                    try { statusCode = Integer.parseInt(parts[1]); } catch (Exception ignored) {}
+                }
+            }
+
+            long elapsedNanos = System.nanoTime() - startNanos;
+            long latencyMs = Math.max(1, elapsedNanos / 1_000_000);
+            execution.setLatencyMs(latencyMs);
+            execution.setResponseStatus(statusCode);
+
+            // Read response headers
+            Map<String, List<String>> rawRespHeaders = new LinkedHashMap<>();
+            String headerLine;
+            String etagHeader = null;
+            while ((headerLine = readLine(in)) != null && !headerLine.isEmpty()) {
+                int colon = headerLine.indexOf(':');
+                if (colon > 0) {
+                    String hName = headerLine.substring(0, colon).trim();
+                    String hVal = headerLine.substring(colon + 1).trim();
+                    rawRespHeaders.computeIfAbsent(hName, k -> new ArrayList<>()).add(hVal);
+                    if ("etag".equalsIgnoreCase(hName)) {
+                        etagHeader = hVal;
+                    }
+                }
+            }
+            execution.setResponseHeaders(objectMapper.writeValueAsString(secretMasker.maskHeaders(rawRespHeaders)));
+
+            // Read body
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            int total = 0;
+            boolean truncated = false;
+            while ((n = in.read(buf)) != -1) {
+                total += n;
+                if (total > maxResponseSizeBytes) {
+                    baos.write(buf, 0, n);
+                    truncated = true;
+                    break;
+                }
+                baos.write(buf, 0, n);
+            }
+            String rawBody = baos.toString(StandardCharsets.UTF_8);
+            if (truncated) {
+                rawBody += "\n[RESPONSE TRUNCATED - EXCEEDED 2MB LIMIT]";
+            }
+            execution.setResponseBody(secretMasker.maskBody(rawBody));
+            execution.setCompletedAt(OffsetDateTime.now());
+
+            // Evaluate Assertions
+            List<AssertionResult> assertions = assertionEngine.evaluateAssertions(execution, step.getExpectedStatus(), "application/json");
+            boolean allPassed = assertions.stream().allMatch(AssertionResult::isPassed);
+            if (!allPassed) {
+                for (AssertionResult ar : assertions) {
+                    if (!ar.isPassed()) {
+                        log.error("ASSERTION FAILED for step {} {}: status={} body={} target={} msg={}",
+                                method, step.getPathTemplate(), statusCode, rawBody, ar.getTargetField(), ar.getMessage());
+                    }
+                }
+            }
+
+            StepStatus finalStatus;
+            if (statusCode == 429) {
+                finalStatus = StepStatus.RATE_LIMITED;
+            } else if (statusCode == 401) {
+                finalStatus = StepStatus.AUTHENTICATION_ERROR;
+            } else if (statusCode == 403) {
+                finalStatus = StepStatus.AUTHORIZATION_ERROR;
+            } else if (allPassed) {
+                finalStatus = StepStatus.PASSED;
+            } else {
+                finalStatus = StepStatus.FAILED;
+            }
+            execution.setStatus(finalStatus);
+
+            if (etagHeader != null) {
+                context.setVariable("etag", etagHeader);
+                String entity = extractEntityPrefix(step.getPathTemplate());
+                context.setVariable(entity + ".etag", etagHeader);
+            }
+
+            if (finalStatus == StepStatus.PASSED && !rawBody.isBlank()) {
+                extractAndStoreVariables(rawBody, step, context, execution);
+            }
+
+            executionRepository.save(execution);
+            for (AssertionResult ar : assertions) {
+                assertionResultRepository.save(ar);
+            }
+
+            step.setStatus(finalStatus);
+            return new StepExecutionOutcome(finalStatus, execution, assertions, null);
+        }
+    }
+
+    private String readLine(InputStream in) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        int c;
+        while ((c = in.read()) != -1) {
+            if (c == '\r') {
+                int next = in.read();
+                if (next == '\n' || next == -1) break;
+                baos.write(c);
+                baos.write(next);
+            } else if (c == '\n') {
+                break;
+            } else {
+                baos.write(c);
+            }
+        }
+        if (c == -1 && baos.size() == 0) return null;
+        return baos.toString(StandardCharsets.UTF_8);
     }
 }

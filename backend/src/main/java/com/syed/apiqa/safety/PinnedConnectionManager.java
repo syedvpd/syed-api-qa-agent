@@ -17,6 +17,11 @@ public class PinnedConnectionManager {
 
     private static final Logger log = LoggerFactory.getLogger(PinnedConnectionManager.class);
 
+    static {
+        // Allows HttpURLConnection to set Host header for IP-pinned connections
+        System.setProperty("sun.net.http.allowRestrictedHeaders", "true");
+    }
+
     public static HttpURLConnection openPinnedConnection(SsrfProtectionGuard.ValidatedTarget target, int timeoutSeconds) throws IOException {
         if (target == null) {
             throw new IllegalArgumentException("ValidatedTarget cannot be null");
