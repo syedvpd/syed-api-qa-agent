@@ -44,6 +44,8 @@ export default function SchedulesPage() {
   const [formEnv, setFormEnv] = useState("STAGING");
   const [formType, setFormType] = useState<"DAILY" | "WEEKLY" | "CUSTOM_CRON">("DAILY");
   const [formCron, setFormCron] = useState("");
+  const [formAuthType, setFormAuthType] = useState("NONE");
+  const [formAuthToken, setFormAuthToken] = useState("");
 
   const loadSchedules = async () => {
     setLoading(true);
@@ -81,7 +83,10 @@ export default function SchedulesPage() {
           openapiUrl: formUrl,
           environment: formEnv,
           scheduleType: formType,
-          cronExpression: formCron
+          cronExpression: formCron,
+          authType: formAuthType,
+          authToken: formAuthToken || undefined,
+          authCredentials: formAuthToken || undefined,
         })
       });
 
@@ -332,6 +337,35 @@ export default function SchedulesPage() {
                     <option value="CUSTOM_CRON">Custom Cron</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">Auth Type</label>
+                  <select
+                    value={formAuthType}
+                    onChange={(e) => setFormAuthType(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="NONE">None</option>
+                    <option value="BEARER">Bearer Token</option>
+                    <option value="API_KEY">API Key</option>
+                    <option value="BASIC">Basic Auth</option>
+                  </select>
+                </div>
+
+                {formAuthType !== "NONE" && (
+                  <div>
+                    <label className="block text-slate-400 mb-1">Auth Token / Key</label>
+                    <input
+                      type="password"
+                      placeholder="Secret credentials"
+                      value={formAuthToken}
+                      onChange={(e) => setFormAuthToken(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                    />
+                  </div>
+                )}
               </div>
 
               {formType === "CUSTOM_CRON" && (

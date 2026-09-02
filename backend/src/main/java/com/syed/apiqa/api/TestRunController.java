@@ -28,6 +28,7 @@ public class TestRunController {
     private final PerformanceMetricRepository performanceMetricRepository;
     private final ReportRepository reportRepository;
     private final PdfReportGenerator pdfReportGenerator;
+    private final com.syed.apiqa.reporting.HtmlReportGenerator htmlReportGenerator;
     private final RunManager runManager;
     private final SseEventService sseEventService;
     private final SsrfProtectionGuard ssrfGuard;
@@ -45,6 +46,7 @@ public class TestRunController {
                              PerformanceMetricRepository performanceMetricRepository,
                              ReportRepository reportRepository,
                              PdfReportGenerator pdfReportGenerator,
+                             com.syed.apiqa.reporting.HtmlReportGenerator htmlReportGenerator,
                              RunManager runManager,
                              SseEventService sseEventService,
                              SsrfProtectionGuard ssrfGuard,
@@ -61,6 +63,7 @@ public class TestRunController {
         this.performanceMetricRepository = performanceMetricRepository;
         this.reportRepository = reportRepository;
         this.pdfReportGenerator = pdfReportGenerator;
+        this.htmlReportGenerator = htmlReportGenerator;
         this.runManager = runManager;
         this.sseEventService = sseEventService;
         this.ssrfGuard = ssrfGuard;
@@ -115,6 +118,9 @@ public class TestRunController {
         String envTypeStr = request.getOrDefault("environmentType", request.getOrDefault("environment", "STAGING"));
         String authType = request.getOrDefault("authType", "NONE");
         String authCredentials = request.get("authCredentials");
+        if (authCredentials == null || authCredentials.isBlank()) {
+            authCredentials = request.get("authToken");
+        }
 
         if (openapiUrl == null || openapiUrl.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "openapiUrl is required"));
@@ -354,6 +360,13 @@ public class TestRunController {
         ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
         if (authCheck != null) return authCheck;
         return reportRepository.findByTestRunId(id)
+                .or(() -> {
+                    try {
+                        return Optional.ofNullable(htmlReportGenerator.generateAndSaveReport(runOpt.get()));
+                    } catch (Exception e) {
+                        return Optional.empty();
+                    }
+                })
                 .map(r -> ResponseEntity.ok()
                         .contentType(MediaType.TEXT_HTML)
                         .body(r.getHtmlContent()))

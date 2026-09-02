@@ -23,9 +23,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Production Orchestrator managing execution lifecycle, real bounded concurrency,
@@ -47,6 +46,7 @@ public class RunManager {
     private final PerformanceAnalyticsService performanceAnalyticsService;
     private final HistoricalRegressionService historicalRegressionService;
     private final HtmlReportGenerator reportGenerator;
+    private final com.syed.apiqa.reporting.PdfReportGenerator pdfReportGenerator;
     private final SseEventService sseEventService;
     private final TestRunRepository testRunRepository;
     private final ApiEndpointRepository apiEndpointRepository;
@@ -77,6 +77,7 @@ public class RunManager {
                       PerformanceAnalyticsService performanceAnalyticsService,
                       HistoricalRegressionService historicalRegressionService,
                       HtmlReportGenerator reportGenerator,
+                      com.syed.apiqa.reporting.PdfReportGenerator pdfReportGenerator,
                       SseEventService sseEventService,
                       TestRunRepository testRunRepository,
                       ApiEndpointRepository apiEndpointRepository,
@@ -99,6 +100,7 @@ public class RunManager {
         this.performanceAnalyticsService = performanceAnalyticsService;
         this.historicalRegressionService = historicalRegressionService;
         this.reportGenerator = reportGenerator;
+        this.pdfReportGenerator = pdfReportGenerator;
         this.sseEventService = sseEventService;
         this.testRunRepository = testRunRepository;
         this.apiEndpointRepository = apiEndpointRepository;
@@ -325,126 +327,60 @@ public class RunManager {
                 }
             }
 
-            int passed = 0;
-            int failed = 0;
-            int blocked = 0;
-            boolean timedOut = false;
+            AtomicInteger passedCounter = new AtomicInteger(0);
+            AtomicInteger failedCounter = new AtomicInteger(0);
+            AtomicInteger blockedCounter = new AtomicInteger(0);
 
-            outerLoop:
+            // Separate into Level 1 (CRUD workflows: producers that create resources & extract IDs)
+            // and Level 2 (Independent verification: single endpoints, pagination, negative fuzzing)
+            List<TestCase> crudCases = new ArrayList<>();
+            List<TestCase> independentCases = new ArrayList<>();
+
             for (TestCase tc : plan.getTestCases()) {
-                List<TestStep> steps = testStepRepository.findByTestCaseIdOrderByStepOrderAsc(tc.getId());
-                boolean caseFailed = false;
-
-                for (int i = 0; i < steps.size(); i++) {
-                    // Check Cancellation
-                    if (isCancelled(testRunId)) {
-                        log.info("Cancellation detected for run {}. Aborting step execution loop.", testRunId);
-                        break outerLoop;
-                    }
-
-                    // Check Pause: Block thread safely while paused
-                    while (isPaused(testRunId) && !isCancelled(testRunId)) {
-                        try {
-                            Thread.sleep(300);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            break outerLoop;
-                        }
-                    }
-                    if (isCancelled(testRunId)) break outerLoop;
-
-                    // 6.6 Check Run Timeout Watchdog
-                    long elapsedSeconds = (System.nanoTime() - startNanos) / 1_000_000_000;
-                    if (elapsedSeconds > timeoutSeconds) {
-                        log.warn("TestRun {} exceeded max duration limit of {}s (elapsed: {}s). Triggering TIMEOUT.",
-                                testRunId, timeoutSeconds, elapsedSeconds);
-                        timedOut = true;
-                        break outerLoop;
-                    }
-
-                    TestStep step = steps.get(i);
-                    if (step.getStatus() == StepStatus.SKIPPED) continue;
-
-                    if (caseFailed) {
-                        blocked++;
-                        continue;
-                    }
-
-                    sseEventService.publishEvent(run.getId(), "TEST_STARTED", Map.of("stepId", step.getId(), "name", step.getName(), "method", step.getMethod()));
-
-                    HttpExecutionEngine.StepExecutionOutcome outcome = httpEngine.executeStep(
-                            step,
-                            run.getTargetBaseUrl(),
-                            context,
-                            run.getEnvironmentType(),
-                            authType,
-                            authCredentials
-                    );
-
-                    // Dynamic token refresh on 401
-                    if (outcome.getFinalStatus() == StepStatus.AUTHENTICATION_ERROR && run.getAuthRefreshUrl() != null) {
-                        log.info("Received 401 on step '{}'. Attempting dynamic token refresh...", step.getName());
-                        DynamicAuthService.AuthResult refreshResult = dynamicAuthService.refreshToken(
-                                run.getAuthRefreshUrl(),
-                                context.getVariable("auth.token"),
-                                run.getAuthTokenPath()
-                        );
-                        if (refreshResult.isSuccess()) {
-                            context.setVariable("auth.token", refreshResult.getToken());
-                            authCredentials = refreshResult.getToken();
-
-                            String m = step.getMethod().toUpperCase();
-                            if (!"POST".equals(m)) {
-                                outcome = httpEngine.executeStep(
-                                        step,
-                                        run.getTargetBaseUrl(),
-                                        context,
-                                        run.getEnvironmentType(),
-                                        authType,
-                                        authCredentials
-                                );
-                            }
-                        }
-                    }
-
-                    step.setStatus(outcome.getFinalStatus());
-                    testStepRepository.save(step);
-
-                    // Phase 2: Register Created Resources for Automated Teardown
-                    if ("POST".equalsIgnoreCase(step.getMethod()) && outcome.getFinalStatus() == StepStatus.PASSED) {
-                        String entityName = step.getPathTemplate() != null
-                                ? dependencyEngine.extractEntityNameFromPath(step.getPathTemplate())
-                                : "entity";
-                        String createdId = context.getVariable(entityName + ".id");
-                        if (createdId == null) createdId = context.getVariable("id");
-                        if (createdId == null) createdId = context.getVariable(entityName + "_id");
-
-                        if (createdId != null) {
-                            String deletePath = findMatchingDeletePath(discovery.getEndpoints(), entityName, step.getPathTemplate());
-                            cleanupManager.recordCreatedResource(run, entityName, createdId, deletePath, i);
-                        }
-                    }
-
-                    // Failure Isolation
-                    if (outcome.getFinalStatus() != StepStatus.PASSED) {
-                        caseFailed = true;
-                        List<TestStep> remaining = steps.subList(i + 1, steps.size());
-                        failureIsolationHandler.isolateFailureAndBlockDownstream(step, remaining, tc.getScenarioType());
-                    }
-
-                    if (outcome.getFinalStatus() == StepStatus.PASSED) passed++;
-                    else if (outcome.getFinalStatus() == StepStatus.BLOCKED) blocked++;
-                    else failed++;
-
-                    run.setPassedTests(passed);
-                    run.setFailedTests(failed);
-                    run.setBlockedTests(blocked);
-                    testRunRepository.save(run);
+                if ("CRUD_WORKFLOW".equalsIgnoreCase(tc.getScenarioType())) {
+                    crudCases.add(tc);
+                } else {
+                    independentCases.add(tc);
                 }
-
-                tc.setStatus(caseFailed ? StepStatus.FAILED : StepStatus.PASSED);
-                testCaseRepository.save(tc);
             }
+
+            final String fAuthType = authType;
+            final String fAuthCreds = authCredentials;
+
+            // 1. Execute Level 1 (CRUD workflows) sequentially to establish resource state & capture IDs
+            for (TestCase tc : crudCases) {
+                if (isCancelled(testRunId)) break;
+                executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery);
+                run.setPassedTests(passedCounter.get());
+                run.setFailedTests(failedCounter.get());
+                run.setBlockedTests(blockedCounter.get());
+                testRunRepository.save(run);
+            }
+
+            // 2. Execute Level 2 (Independent operations) concurrently with bounded thread pool
+            if (!isCancelled(testRunId) && !independentCases.isEmpty()) {
+                int workerThreads = Math.min(8, Math.max(2, Runtime.getRuntime().availableProcessors() * 2));
+                ExecutorService pool = Executors.newFixedThreadPool(workerThreads);
+                for (TestCase tc : independentCases) {
+                    pool.submit(() -> {
+                        if (!isCancelled(testRunId)) {
+                            executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery);
+                        }
+                    });
+                }
+                pool.shutdown();
+                try {
+                    pool.awaitTermination(timeoutSeconds, TimeUnit.SECONDS);
+                } catch (InterruptedException ie) {
+                    pool.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            run.setPassedTests(passedCounter.get());
+            run.setFailedTests(failedCounter.get());
+            run.setBlockedTests(blockedCounter.get());
+            testRunRepository.save(run);
 
             // Handle cancellation terminal exit
             if (isCancelled(testRunId)) {
@@ -457,7 +393,8 @@ public class RunManager {
             }
 
             // Handle timeout terminal exit
-            if (timedOut) {
+            long totalElapsedSec = (System.nanoTime() - startNanos) / 1_000_000_000;
+            if (totalElapsedSec > timeoutSeconds) {
                 run.setStatus(RunStatus.TIMED_OUT);
                 run.setErrorMessage("EXECUTION_TIMEOUT_EXCEEDED (Max " + timeoutSeconds + "s)");
                 run.setCompletedAt(OffsetDateTime.now());
@@ -522,18 +459,20 @@ public class RunManager {
             recordAudit(run, "CLEANUP_COMPLETED", "SYSTEM", "Cleanup status: " + run.getCleanupStatus());
 
             // -------------------------------------------------------------
-            // Stage 6: REPORTING
+            // Stage 6: REPORTING & MANDATORY PDF COMPLETION GATE
             // -------------------------------------------------------------
             run.setStatus(RunStatus.REPORTING);
             testRunRepository.save(run);
             sseEventService.publishEvent(run.getId(), "REPORTING_STARTED", Collections.emptyMap());
 
-            try {
-                reportGenerator.generateAndSaveReport(run);
-                recordAudit(run, "REPORT_GENERATED", "SYSTEM", "Executive report generated successfully.");
-            } catch (Exception e) {
-                log.error("Report generation encountered error for run {}: {}", run.getId(), e.getMessage(), e);
+            reportGenerator.generateAndSaveReport(run);
+            recordAudit(run, "REPORT_GENERATED", "SYSTEM", "Executive HTML report generated successfully.");
+
+            byte[] pdfBytes = pdfReportGenerator.generatePdfReport(run);
+            if (pdfBytes == null || pdfBytes.length == 0) {
+                throw new IllegalStateException("Mandatory PDF report generation gate failed: 0 bytes produced");
             }
+            recordAudit(run, "PDF_REPORT_GENERATED", "SYSTEM", "Executive PDF report generated successfully (" + pdfBytes.length + " bytes).");
 
             // -------------------------------------------------------------
             // Stage 7: COMPLETED
@@ -571,6 +510,135 @@ public class RunManager {
             cancellationFlags.remove(testRunId);
             pauseFlags.remove(testRunId);
         }
+    }
+
+    private void executeTestCase(TestCase tc, TestRun run, ExecutionContext context,
+                                 String authType, String authCredentials,
+                                 AtomicInteger passedCounter,
+                                 AtomicInteger failedCounter,
+                                 AtomicInteger blockedCounter,
+                                 OpenApiParserService.DiscoveryResult discovery) {
+        List<TestStep> steps = testStepRepository.findByTestCaseIdOrderByStepOrderAsc(tc.getId());
+        boolean caseFailed = false;
+
+        for (int i = 0; i < steps.size(); i++) {
+            if (isCancelled(run.getId())) return;
+
+            TestStep step = steps.get(i);
+            if (step.getStatus() == StepStatus.SKIPPED) continue;
+
+            if (caseFailed) {
+                step.setStatus(StepStatus.BLOCKED);
+                step.setFailureReason("BLOCKED: Failure in upstream step of scenario");
+                testStepRepository.save(step);
+                int b = blockedCounter.incrementAndGet();
+                sseEventService.publishEvent(run.getId(), "TEST_BLOCKED", Map.of(
+                        "stepId", step.getId(),
+                        "name", step.getName(),
+                        "reason", step.getFailureReason(),
+                        "passed", passedCounter.get(),
+                        "failed", failedCounter.get(),
+                        "blocked", b
+                ));
+                continue;
+            }
+
+            sseEventService.publishEvent(run.getId(), "TEST_STARTED", Map.of(
+                    "stepId", step.getId(),
+                    "name", step.getName(),
+                    "method", step.getMethod()
+            ));
+
+            HttpExecutionEngine.StepExecutionOutcome outcome = httpEngine.executeStep(
+                    step,
+                    run.getTargetBaseUrl(),
+                    context,
+                    run.getEnvironmentType(),
+                    authType,
+                    authCredentials
+            );
+
+            // Dynamic token refresh on 401
+            if (outcome.getFinalStatus() == StepStatus.AUTHENTICATION_ERROR && run.getAuthRefreshUrl() != null) {
+                DynamicAuthService.AuthResult refreshResult = dynamicAuthService.refreshToken(
+                        run.getAuthRefreshUrl(),
+                        context.getVariable("auth.token"),
+                        run.getAuthTokenPath()
+                );
+                if (refreshResult.isSuccess()) {
+                    context.setVariable("auth.token", refreshResult.getToken());
+                    String m = step.getMethod().toUpperCase();
+                    if (!"POST".equals(m)) {
+                        outcome = httpEngine.executeStep(
+                                step,
+                                run.getTargetBaseUrl(),
+                                context,
+                                run.getEnvironmentType(),
+                                authType,
+                                refreshResult.getToken()
+                        );
+                    }
+                }
+            }
+
+            step.setStatus(outcome.getFinalStatus());
+            testStepRepository.save(step);
+
+            // Phase 2: Register Created Resources for Automated Teardown
+            if ("POST".equalsIgnoreCase(step.getMethod()) && outcome.getFinalStatus() == StepStatus.PASSED) {
+                String entityName = step.getPathTemplate() != null
+                        ? dependencyEngine.extractEntityNameFromPath(step.getPathTemplate())
+                        : "entity";
+                String createdId = context.getVariable(entityName + ".id");
+                if (createdId == null) createdId = context.getVariable("id");
+                if (createdId == null) createdId = context.getVariable(entityName + "_id");
+
+                if (createdId != null) {
+                    String deletePath = findMatchingDeletePath(discovery.getEndpoints(), entityName, step.getPathTemplate());
+                    cleanupManager.recordCreatedResource(run, entityName, createdId, deletePath, i);
+                }
+            }
+
+            // Publish real per-step SSE result events
+            if (outcome.getFinalStatus() == StepStatus.PASSED) {
+                int p = passedCounter.incrementAndGet();
+                sseEventService.publishEvent(run.getId(), "TEST_COMPLETED", Map.of(
+                        "stepId", step.getId(),
+                        "name", step.getName(),
+                        "method", step.getMethod(),
+                        "passed", p,
+                        "failed", failedCounter.get(),
+                        "blocked", blockedCounter.get()
+                ));
+            } else if (outcome.getFinalStatus() == StepStatus.BLOCKED) {
+                int b = blockedCounter.incrementAndGet();
+                sseEventService.publishEvent(run.getId(), "TEST_BLOCKED", Map.of(
+                        "stepId", step.getId(),
+                        "name", step.getName(),
+                        "reason", step.getFailureReason() != null ? step.getFailureReason() : "Blocked",
+                        "passed", passedCounter.get(),
+                        "failed", failedCounter.get(),
+                        "blocked", b
+                ));
+            } else {
+                caseFailed = true;
+                int f = failedCounter.incrementAndGet();
+                sseEventService.publishEvent(run.getId(), "TEST_FAILED", Map.of(
+                        "stepId", step.getId(),
+                        "name", step.getName(),
+                        "status", outcome.getFinalStatus().name(),
+                        "reason", step.getFailureReason() != null ? step.getFailureReason() : "Failed",
+                        "passed", passedCounter.get(),
+                        "failed", f,
+                        "blocked", blockedCounter.get()
+                ));
+                List<TestStep> remaining = steps.subList(i + 1, steps.size());
+                failureIsolationHandler.isolateFailureAndBlockDownstream(step, remaining, tc.getScenarioType());
+            }
+        }
+
+        tc.setStatus(caseFailed ? StepStatus.FAILED : StepStatus.PASSED);
+        testCaseRepository.save(tc);
     }
 
     private void recordAudit(TestRun run, String eventType, String actor, String details) {

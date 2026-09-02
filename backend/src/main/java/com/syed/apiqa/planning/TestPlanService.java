@@ -1,24 +1,33 @@
 package com.syed.apiqa.planning;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.syed.apiqa.domain.*;
 import com.syed.apiqa.generation.DeterministicDataGenerator;
 import com.syed.apiqa.generation.NegativeDataGenerator;
 import io.swagger.v3.oas.models.media.Schema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Plans and formulates executable TestCases and TestSteps for a TestRun.
  * Builds:
  * 1. Coordinated positive CRUD workflows where parent-child operations exist.
- * 2. Negative & boundary fuzzing suites for payload validation robustness.
- * 3. Single-endpoint contract verification for independent routes.
+ * 2. Real OpenAPI parameter-driven execution for all endpoints (query, header, path, cookie, body).
+ * 3. Contract-derived response status code expectations.
+ * 4. Topological execution ordering preserving dependencies.
+ * 5. Negative & boundary fuzzing suites for payload validation robustness.
  */
 @Service
 public class TestPlanService {
+
+    private static final Logger log = LoggerFactory.getLogger(TestPlanService.class);
 
     private final DeterministicDataGenerator dataGenerator;
     private final NegativeDataGenerator negativeGenerator;
@@ -52,16 +61,15 @@ public class TestPlanService {
         List<TestCase> testCases = new ArrayList<>();
         Map<String, List<TestStep>> stepsByCaseId = new HashMap<>();
 
-        // 7.11 Large API Support: Bounded processing limits
-        final int MAX_ENDPOINTS = 500;
+        if (endpoints == null || endpoints.isEmpty()) {
+            return new PlanResult(testCases, stepsByCaseId);
+        }
+
         final int MAX_NEGATIVE_PER_EP = 5;
-        List<ApiEndpoint> boundedEndpoints = (endpoints != null && endpoints.size() > MAX_ENDPOINTS)
-                ? endpoints.subList(0, MAX_ENDPOINTS)
-                : (endpoints != null ? endpoints : Collections.emptyList());
 
         // Group endpoints by entity name
         Map<String, List<ApiEndpoint>> entityMap = new LinkedHashMap<>();
-        for (ApiEndpoint ep : boundedEndpoints) {
+        for (ApiEndpoint ep : endpoints) {
             String entity = dependencyEngine.extractEntityNameFromPath(ep.getPath());
             entityMap.computeIfAbsent(entity, k -> new ArrayList<>()).add(ep);
         }
@@ -69,7 +77,9 @@ public class TestPlanService {
         int caseOrder = 1;
         Set<String> plannedEndpointIds = new HashSet<>();
 
-        // 1. Plan CRUD workflows for entities that support POST and parameterized child routes
+        // ------------------------------------------------------------------
+        // Stage 1: Plan CRUD workflows for entities supporting stateful lifecycles
+        // ------------------------------------------------------------------
         for (Map.Entry<String, List<ApiEndpoint>> entry : entityMap.entrySet()) {
             String entity = entry.getKey();
             List<ApiEndpoint> entityEndpoints = entry.getValue();
@@ -83,7 +93,6 @@ public class TestPlanService {
             ApiEndpoint deleteEp = findEndpoint(entityEndpoints, "DELETE", true);
 
             if (postEp != null && getByIdEp != null) {
-                // We have a verifiable stateful CRUD lifecycle
                 TestCase crudCase = new TestCase();
                 crudCase.setId(UUID.randomUUID().toString());
                 crudCase.setTestRun(testRun);
@@ -99,20 +108,22 @@ public class TestPlanService {
                 int stepOrder = 1;
 
                 // Step 1: POST /entity (CREATE)
-                TestStep createStep = createStep(crudCase, postEp, stepOrder++, "CREATE " + entity, "POST", postEp.getPath(), 201, testRun.getId());
+                int postExpected = extractExpectedStatus(postEp, 201);
+                TestStep createStep = createStepWithParams(crudCase, postEp, stepOrder++, "CREATE " + entity, "POST", postEp.getPath(), postExpected, testRun.getId(), entity);
                 steps.add(createStep);
                 plannedEndpointIds.add(postEp.getId());
 
                 // Step 2: GET /entity/{id} (READ after create)
                 String getPath = replacePathParamWithVar(getByIdEp.getPath(), "{{" + entity + ".id}}");
-                TestStep readStep1 = createStep(crudCase, getByIdEp, stepOrder++, "READ " + entity + " by ID", "GET", getPath, 200, testRun.getId());
+                int getExpected = extractExpectedStatus(getByIdEp, 200);
+                TestStep readStep1 = createStepWithParams(crudCase, getByIdEp, stepOrder++, "READ " + entity + " by ID", "GET", getPath, getExpected, testRun.getId(), entity);
                 steps.add(readStep1);
 
                 // Step 2b: Conditional ETag GET /entity/{id} only if contract specifies ETag or 304
                 if (getByIdEp.getResponseSchemas() != null &&
                         (getByIdEp.getResponseSchemas().toLowerCase().contains("etag") ||
                          getByIdEp.getResponseSchemas().contains("304"))) {
-                    TestStep condStep = createStep(crudCase, getByIdEp, stepOrder++, "CONDITIONAL READ " + entity + " (If-None-Match)", "GET", getPath, 304, testRun.getId());
+                    TestStep condStep = createStepWithParams(crudCase, getByIdEp, stepOrder++, "CONDITIONAL READ " + entity + " (If-None-Match)", "GET", getPath, 304, testRun.getId(), entity);
                     condStep.setRequestHeaders("If-None-Match: {{" + entity + ".etag}}");
                     steps.add(condStep);
                 }
@@ -120,44 +131,73 @@ public class TestPlanService {
                 // Step 3: PATCH/PUT /entity/{id} (UPDATE)
                 if (updateEp != null) {
                     String updatePath = replacePathParamWithVar(updateEp.getPath(), "{{" + entity + ".id}}");
-                    TestStep updateStep = createStep(crudCase, updateEp, stepOrder++, "UPDATE " + entity, updateEp.getMethod(), updatePath, 200, testRun.getId());
+                    int updateExpected = extractExpectedStatus(updateEp, 200);
+                    TestStep updateStep = createStepWithParams(crudCase, updateEp, stepOrder++, "UPDATE " + entity, updateEp.getMethod(), updatePath, updateExpected, testRun.getId(), entity);
                     steps.add(updateStep);
                     plannedEndpointIds.add(updateEp.getId());
 
                     // Step 4: GET /entity/{id} (READ after update)
-                    TestStep readStep2 = createStep(crudCase, getByIdEp, stepOrder++, "VERIFY UPDATE " + entity, "GET", getPath, 200, testRun.getId());
+                    TestStep readStep2 = createStepWithParams(crudCase, getByIdEp, stepOrder++, "VERIFY UPDATE " + entity, "GET", getPath, getExpected, testRun.getId(), entity);
                     steps.add(readStep2);
                 }
 
                 // Step 5: DELETE /entity/{id} (DELETE)
                 if (deleteEp != null) {
                     String deletePath = replacePathParamWithVar(deleteEp.getPath(), "{{" + entity + ".id}}");
-                    TestStep deleteStep = createStep(crudCase, deleteEp, stepOrder++, "DELETE " + entity, "DELETE", deletePath, 204, testRun.getId());
+                    int deleteExpected = extractExpectedStatus(deleteEp, 204);
+                    TestStep deleteStep = createStepWithParams(crudCase, deleteEp, stepOrder++, "DELETE " + entity, "DELETE", deletePath, deleteExpected, testRun.getId(), entity);
                     steps.add(deleteStep);
                     plannedEndpointIds.add(deleteEp.getId());
 
                     // Step 6: GET /entity/{id} (VERIFY 404 NOT FOUND)
-                    TestStep verify404Step = createStep(crudCase, getByIdEp, stepOrder++, "VERIFY 404 AFTER DELETE " + entity, "GET", getPath, 404, testRun.getId());
+                    TestStep verify404Step = createStepWithParams(crudCase, getByIdEp, stepOrder++, "VERIFY 404 AFTER DELETE " + entity, "GET", getPath, 404, testRun.getId(), entity);
                     steps.add(verify404Step);
                 }
 
                 plannedEndpointIds.add(getByIdEp.getId());
-
                 testCases.add(crudCase);
                 stepsByCaseId.put(crudCase.getId(), steps);
             }
         }
 
-        // 2. Plan Pagination & Filter Tests for Collection Endpoints with declared pagination params
-        for (ApiEndpoint ep : boundedEndpoints) {
+        // ------------------------------------------------------------------
+        // Stage 2: Plan Single-Endpoint checks for ALL remaining endpoints (100% coverage)
+        // ------------------------------------------------------------------
+        for (ApiEndpoint ep : endpoints) {
+            if (!plannedEndpointIds.contains(ep.getId())) {
+                String entity = dependencyEngine.extractEntityNameFromPath(ep.getPath());
+                int expectedStatus = extractExpectedStatus(ep, "DELETE".equalsIgnoreCase(ep.getMethod()) ? 204 : ("POST".equalsIgnoreCase(ep.getMethod()) ? 201 : 200));
+
+                TestCase singleCase = new TestCase();
+                singleCase.setId(UUID.randomUUID().toString());
+                singleCase.setTestRun(testRun);
+                singleCase.setName("Contract: " + ep.getMethod() + " " + ep.getPath());
+                singleCase.setDescription("Deterministic contract verification for " + ep.getMethod() + " " + ep.getPath());
+                singleCase.setScenarioType("SINGLE_ENDPOINT");
+                singleCase.setCategory("POSITIVE_CONTRACT");
+                singleCase.setExecutionOrder(caseOrder++);
+                singleCase.setStatus(StepStatus.PENDING);
+                singleCase.setCreatedAt(OffsetDateTime.now());
+
+                TestStep step = createStepWithParams(singleCase, ep, 1, ep.getMethod() + " " + ep.getPath(), ep.getMethod(), ep.getPath(), expectedStatus, testRun.getId(), entity);
+                testCases.add(singleCase);
+                stepsByCaseId.put(singleCase.getId(), Collections.singletonList(step));
+                plannedEndpointIds.add(ep.getId());
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Stage 3: Plan Pagination & Filter Tests for Collection Endpoints
+        // ------------------------------------------------------------------
+        for (ApiEndpoint ep : endpoints) {
             if ("GET".equalsIgnoreCase(ep.getMethod()) && !ep.getPath().contains("{")
                     && ep.getParameters() != null
                     && (ep.getParameters().toLowerCase().contains("page") || ep.getParameters().toLowerCase().contains("limit") || ep.getParameters().toLowerCase().contains("offset"))) {
                 TestCase pageCase = new TestCase();
                 pageCase.setId(UUID.randomUUID().toString());
                 pageCase.setTestRun(testRun);
-                pageCase.setName("Pagination & Filter: " + ep.getPath());
-                pageCase.setDescription("Deterministic query pagination, boundary limits, and filter verification");
+                pageCase.setName("Pagination: " + ep.getPath());
+                pageCase.setDescription("Query pagination, boundary limits, and filter verification");
                 pageCase.setScenarioType("PAGINATION_AND_FILTERING");
                 pageCase.setCategory("PAGINATION_FILTER");
                 pageCase.setExecutionOrder(caseOrder++);
@@ -166,31 +206,26 @@ public class TestPlanService {
 
                 List<TestStep> pageSteps = new ArrayList<>();
                 int pOrder = 1;
+                int exp = extractExpectedStatus(ep, 200);
 
-                // Page 1
-                TestStep p1 = createStep(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 1)", "GET", ep.getPath() + "?page=1&pageSize=10", 200, testRun.getId());
+                TestStep p1 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 1)", "GET", ep.getPath() + "?page=1&pageSize=10", exp, testRun.getId(), null);
                 pageSteps.add(p1);
 
-                // Page 2
-                TestStep p2 = createStep(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 2)", "GET", ep.getPath() + "?page=2&pageSize=10", 200, testRun.getId());
+                TestStep p2 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 2)", "GET", ep.getPath() + "?page=2&pageSize=10", exp, testRun.getId(), null);
                 pageSteps.add(p2);
 
-                // Filter & Sort
-                TestStep p3 = createStep(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Filter & Sort)", "GET", ep.getPath() + "?search=test&sort=desc", 200, testRun.getId());
+                TestStep p3 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Filter & Sort)", "GET", ep.getPath() + "?search=test&sort=asc", exp, testRun.getId(), null);
                 pageSteps.add(p3);
-
-                // Boundary / Malformed page
-                TestStep p4 = createStep(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Boundary Page)", "GET", ep.getPath() + "?page=0&pageSize=1000", 200, testRun.getId());
-                pageSteps.add(p4);
 
                 testCases.add(pageCase);
                 stepsByCaseId.put(pageCase.getId(), pageSteps);
-                plannedEndpointIds.add(ep.getId());
             }
         }
 
-        // 3. Plan Negative & Boundary Fuzzing Scenarios for endpoints with request bodies
-        for (ApiEndpoint ep : boundedEndpoints) {
+        // ------------------------------------------------------------------
+        // Stage 4: Plan Negative & Boundary Fuzzing Scenarios for request bodies
+        // ------------------------------------------------------------------
+        for (ApiEndpoint ep : endpoints) {
             if (("POST".equalsIgnoreCase(ep.getMethod()) || "PUT".equalsIgnoreCase(ep.getMethod()) || "PATCH".equalsIgnoreCase(ep.getMethod()))
                     && ep.getRequestBodySchema() != null) {
 
@@ -235,35 +270,45 @@ public class TestPlanService {
                         testCases.add(negCase);
                         stepsByCaseId.put(negCase.getId(), negSteps);
                     }
-                } catch (Exception ignored) {}
-            }
-        }
-
-        // 4. Plan Single-Endpoint checks for any remaining unexercised endpoints
-        for (ApiEndpoint ep : boundedEndpoints) {
-            if (!plannedEndpointIds.contains(ep.getId()) && !ep.getPath().contains("{")) {
-                TestCase singleCase = new TestCase();
-                singleCase.setId(UUID.randomUUID().toString());
-                singleCase.setTestRun(testRun);
-                singleCase.setName("Endpoint Sanity: " + ep.getMethod() + " " + ep.getPath());
-                singleCase.setDescription("Standalone contract verification for " + ep.getMethod() + " " + ep.getPath());
-                singleCase.setScenarioType("SINGLE_ENDPOINT");
-                singleCase.setCategory("POSITIVE_CRUD");
-                singleCase.setExecutionOrder(caseOrder++);
-                singleCase.setStatus(StepStatus.PENDING);
-                singleCase.setCreatedAt(OffsetDateTime.now());
-
-                TestStep step = createStep(singleCase, ep, 1, ep.getMethod() + " " + ep.getPath(), ep.getMethod(), ep.getPath(), 200, testRun.getId());
-                testCases.add(singleCase);
-                stepsByCaseId.put(singleCase.getId(), Collections.singletonList(step));
+                } catch (Exception e) {
+                    log.debug("Negative data generation skipped for {}: {}", ep.getPath(), e.getMessage());
+                }
             }
         }
 
         return new PlanResult(testCases, stepsByCaseId);
     }
 
-    private TestStep createStep(TestCase testCase, ApiEndpoint endpoint, int order, String name,
-                                String method, String pathTemplate, int expectedStatus, String runId) {
+    public int extractExpectedStatus(ApiEndpoint endpoint, int defaultFallback) {
+        if (endpoint.getResponseSchemas() == null || endpoint.getResponseSchemas().isBlank()) {
+            return defaultFallback;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(endpoint.getResponseSchemas());
+            if (root.isObject()) {
+                int lowest2xx = Integer.MAX_VALUE;
+                Iterator<String> fieldNames = root.fieldNames();
+                while (fieldNames.hasNext()) {
+                    String field = fieldNames.next();
+                    try {
+                        int code = Integer.parseInt(field.trim());
+                        if (code >= 200 && code < 300 && code < lowest2xx) {
+                            lowest2xx = code;
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+                if (lowest2xx != Integer.MAX_VALUE) {
+                    return lowest2xx;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not parse response schemas for {}: {}", endpoint.getPath(), e.getMessage());
+        }
+        return defaultFallback;
+    }
+
+    private TestStep createStepWithParams(TestCase testCase, ApiEndpoint endpoint, int order, String name,
+                                          String method, String initialPath, int expectedStatus, String runId, String entityName) {
         TestStep step = new TestStep();
         step.setId(UUID.randomUUID().toString());
         step.setTestCase(testCase);
@@ -271,9 +316,84 @@ public class TestPlanService {
         step.setStepOrder(order);
         step.setName(name);
         step.setMethod(method);
-        step.setPathTemplate(pathTemplate);
         step.setExpectedStatus(expectedStatus);
         step.setStatus(StepStatus.PENDING);
+
+        String path = initialPath;
+        Map<String, String> headers = new LinkedHashMap<>();
+        Random random = new Random((runId + endpoint.getPath() + order).hashCode());
+
+        // Process OpenAPI parameters (path, query, header, cookie)
+        if (endpoint.getParameters() != null && !endpoint.getParameters().isBlank()) {
+            try {
+                JsonNode paramsNode = objectMapper.readTree(endpoint.getParameters());
+                if (paramsNode.isArray()) {
+                    List<String> queryParams = new ArrayList<>();
+                    for (JsonNode p : paramsNode) {
+                        String in = p.has("in") ? p.get("in").asText() : "";
+                        String pName = p.has("name") ? p.get("name").asText() : "";
+                        boolean required = p.has("required") && p.get("required").asBoolean();
+                        JsonNode schemaNode = p.get("schema");
+
+                        String val = "test_" + pName;
+                        if (schemaNode != null && !schemaNode.isNull()) {
+                            try {
+                                Schema<?> schema = objectMapper.treeToValue(schemaNode, Schema.class);
+                                Object gen = dataGenerator.generateValueForSchema(schema, pName, random, runId);
+                                if (gen != null) val = gen.toString();
+                            } catch (Exception ignored) {}
+                        }
+
+                        if ("path".equalsIgnoreCase(in)) {
+                            if (entityName != null && ("id".equalsIgnoreCase(pName) || pName.toLowerCase().endsWith("id"))) {
+                                path = path.replace("{" + pName + "}", "{{" + entityName + "." + pName + "}}");
+                            } else {
+                                path = path.replace("{" + pName + "}", val);
+                            }
+                        } else if ("query".equalsIgnoreCase(in)) {
+                            if (required || queryParams.isEmpty()) {
+                                queryParams.add(pName + "=" + val);
+                            }
+                        } else if ("header".equalsIgnoreCase(in)) {
+                            headers.put(pName, val);
+                        } else if ("cookie".equalsIgnoreCase(in)) {
+                            headers.put("Cookie", pName + "=" + val);
+                        }
+                    }
+
+                    if (!queryParams.isEmpty() && !path.contains("?")) {
+                        path += "?" + String.join("&", queryParams);
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Error parsing parameters for {}: {}", endpoint.getPath(), e.getMessage());
+            }
+        }
+
+        // Clean up any remaining path template variables
+        if (path.contains("{")) {
+            Matcher m = Pattern.compile("\\{([a-zA-Z0-9_]+)\\}").matcher(path);
+            StringBuffer sb = new StringBuffer();
+            while (m.find()) {
+                String paramName = m.group(1);
+                if (entityName != null && ("id".equalsIgnoreCase(paramName) || paramName.toLowerCase().endsWith("id"))) {
+                    m.appendReplacement(sb, "{{" + entityName + "." + paramName + "}}");
+                } else {
+                    m.appendReplacement(sb, "1");
+                }
+            }
+            m.appendTail(sb);
+            path = sb.toString();
+        }
+
+        step.setPathTemplate(path);
+
+        // Serialize headers if present
+        if (!headers.isEmpty()) {
+            try {
+                step.setRequestHeaders(objectMapper.writeValueAsString(headers));
+            } catch (Exception ignored) {}
+        }
 
         // Generate synthetic body if method is POST, PUT, or PATCH and requestBodySchema is present
         if (("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method))

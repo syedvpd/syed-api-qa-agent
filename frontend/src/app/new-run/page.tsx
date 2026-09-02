@@ -27,6 +27,7 @@ export default function NewRunPage() {
           environmentType,
           authType,
           authToken: authToken || undefined,
+          authCredentials: authToken || undefined,
         }),
       });
 

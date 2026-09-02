@@ -50,7 +50,7 @@ public class OpenApiParserService {
 
     public DiscoveryResult parse(String specContent, String originalSpecUrl, TestRun testRun) {
         ParseOptions options = new ParseOptions();
-        options.setResolve(true);
+        options.setResolve(false); // Prevents external network requests during parsing (SSRF protection)
         options.setResolveFully(false); // Prevents stack overflow on circular references
 
         SwaggerParseResult parseResult = new OpenAPIV3Parser().readContents(specContent, null, options);

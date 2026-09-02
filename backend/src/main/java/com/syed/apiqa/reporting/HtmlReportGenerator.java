@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Compiles persisted database evidence into a self-contained, responsive HTML audit report.
@@ -56,8 +57,15 @@ public class HtmlReportGenerator {
         long totalLatency = 0;
         List<Long> latencies = new ArrayList<>();
 
+        List<Execution> allExecs = executionRepository.findByTestRunId(testRun.getId());
+        Map<String, Execution> execByStepId = allExecs.stream()
+                .filter(e -> e.getTestStep() != null)
+                .collect(Collectors.toMap(e -> e.getTestStep().getId(), e -> e, (a, b) -> a));
+
         StringBuilder tableRows = new StringBuilder();
         StringBuilder evidenceCards = new StringBuilder();
+        int evidenceCount = 0;
+        int rowCount = 0;
 
         for (TestCase tc : testCases) {
             List<TestStep> steps = testStepRepository.findByTestCaseIdOrderByStepOrderAsc(tc.getId());
@@ -68,8 +76,7 @@ public class HtmlReportGenerator {
                 else if (step.getStatus() == StepStatus.BLOCKED) blockedCount++;
                 else if (step.getStatus() == StepStatus.SKIPPED) skippedCount++;
 
-                List<Execution> execs = executionRepository.findByTestStepId(step.getId());
-                Execution exec = execs.isEmpty() ? null : execs.get(0);
+                Execution exec = execByStepId.get(step.getId());
 
                 long latency = (exec != null && exec.getLatencyMs() != null) ? exec.getLatencyMs() : 0;
                 if (latency > 0) {
@@ -77,21 +84,25 @@ public class HtmlReportGenerator {
                     totalLatency += latency;
                 }
 
-                String statusBadge = getStatusBadge(step.getStatus());
-                String methodBadge = getMethodBadge(step.getMethod());
+                if (rowCount < 500) {
+                    rowCount++;
+                    String statusBadge = getStatusBadge(step.getStatus());
+                    String methodBadge = getMethodBadge(step.getMethod());
 
-                tableRows.append(String.format(
-                        "<tr><td class='font-mono'>%s</td><td class='font-mono text-sm'>%s</td><td>%s</td><td>%s</td><td>%d ms</td><td>%s</td></tr>",
-                        methodBadge,
-                        escapeHtml(secretMasker.maskUrl(step.getResolvedUrl() != null ? step.getResolvedUrl() : step.getPathTemplate())),
-                        step.getExpectedStatus() != null ? step.getExpectedStatus() : "-",
-                        (exec != null && exec.getResponseStatus() != null) ? exec.getResponseStatus() : "-",
-                        latency,
-                        statusBadge
-                ));
+                    tableRows.append(String.format(
+                            "<tr><td class='font-mono'>%s</td><td class='font-mono text-sm'>%s</td><td>%s</td><td>%s</td><td>%d ms</td><td>%s</td></tr>",
+                            methodBadge,
+                            escapeHtml(secretMasker.maskUrl(step.getResolvedUrl() != null ? step.getResolvedUrl() : step.getPathTemplate())),
+                            step.getExpectedStatus() != null ? step.getExpectedStatus() : "-",
+                            (exec != null && exec.getResponseStatus() != null) ? exec.getResponseStatus() : "-",
+                            latency,
+                            statusBadge
+                    ));
+                }
 
-                // Evidence card if execution occurred
-                if (exec != null) {
+                // Evidence card if execution occurred (capped for report performance)
+                if (exec != null && evidenceCount < 60) {
+                    evidenceCount++;
                     List<AssertionResult> assertions = assertionResultRepository.findByExecutionId(exec.getId());
                     StringBuilder assertionHtml = new StringBuilder();
                     for (AssertionResult ar : assertions) {
@@ -104,6 +115,15 @@ public class HtmlReportGenerator {
                         ));
                     }
 
+                    String reqBody = exec.getRequestBody();
+                    if (reqBody != null && reqBody.length() > 1500) {
+                        reqBody = reqBody.substring(0, 1500) + "\n... [truncated for report performance]";
+                    }
+                    String respBody = exec.getResponseBody();
+                    if (respBody != null && respBody.length() > 1500) {
+                        respBody = respBody.substring(0, 1500) + "\n... [truncated for report performance]";
+                    }
+
                     evidenceCards.append(String.format(
                             "<div class='evidence-card'>" +
                                     "<div class='evidence-header'><span>%s %s</span><span>Status: %s &bull; %d ms</span></div>" +
@@ -111,9 +131,9 @@ public class HtmlReportGenerator {
                                     (exec.getRequestUrl() != null ? "<div><strong class='text-slate-400'>Request URL:</strong> <span class='text-slate-300'>" + escapeHtml(secretMasker.maskUrl(exec.getRequestUrl())) + "</span></div>" : "") +
                                     "<div><strong class='text-slate-400'>Assertions:</strong><br/>%s</div>" +
                                     "<div class='mt-2'><strong class='text-slate-400'>Request Headers:</strong><pre class='code-box'>%s</pre></div>" +
-                                    (exec.getRequestBody() != null && !exec.getRequestBody().isBlank() ? "<div class='mt-2'><strong class='text-slate-400'>Request Body:</strong><pre class='code-box'>" + escapeHtml(exec.getRequestBody()) + "</pre></div>" : "") +
+                                    (reqBody != null && !reqBody.isBlank() ? "<div class='mt-2'><strong class='text-slate-400'>Request Body:</strong><pre class='code-box'>" + escapeHtml(reqBody) + "</pre></div>" : "") +
                                     "<div class='mt-2'><strong class='text-slate-400'>Response Headers:</strong><pre class='code-box'>%s</pre></div>" +
-                                    (exec.getResponseBody() != null && !exec.getResponseBody().isBlank() ? "<div class='mt-2'><strong class='text-slate-400'>Response Body:</strong><pre class='code-box'>" + escapeHtml(exec.getResponseBody()) + "</pre></div>" : "") +
+                                    (respBody != null && !respBody.isBlank() ? "<div class='mt-2'><strong class='text-slate-400'>Response Body:</strong><pre class='code-box'>" + escapeHtml(respBody) + "</pre></div>" : "") +
                                     "</div></div>",
                             step.getMethod(),
                             escapeHtml(step.getName()),
@@ -125,6 +145,10 @@ public class HtmlReportGenerator {
                     ));
                 }
             }
+        }
+
+        if (totalTests > 500) {
+            tableRows.append("<tr><td colspan='6' style='text-align:center; padding:12px; color:#94a3b8; font-style:italic;'>Showing first 500 test steps in web view. Download full PDF report for the complete 1,000+ test matrix.</td></tr>");
         }
 
         Collections.sort(latencies);

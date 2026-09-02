@@ -69,6 +69,9 @@ public class ScheduleController {
         String cronExpr = (String) body.get("cronExpression");
         String authType = (String) body.getOrDefault("authType", "NONE");
         String authToken = (String) body.get("authToken");
+        if (authToken == null || authToken.isBlank()) {
+            authToken = (String) body.get("authCredentials");
+        }
 
         if (name == null || name.isBlank() || openapiUrl == null || openapiUrl.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Name and openapiUrl are required."));
