@@ -68,7 +68,7 @@ public class OpenApiFetchService {
 
                 String content = new String(resp.body, StandardCharsets.UTF_8);
                 if (content.trim().startsWith("<!DOCTYPE") || content.trim().startsWith("<html")) {
-                    String autoSpec = attemptAutoResolveSpec(currentUrl);
+                    String autoSpec = attemptAutoResolveSpec(currentUrl, content);
                     if (autoSpec != null) {
                         return autoSpec;
                     }
@@ -209,14 +209,36 @@ public class OpenApiFetchService {
         }
     }
 
-    private String attemptAutoResolveSpec(String originalUrl) {
+    private String attemptAutoResolveSpec(String originalUrl, String htmlContent) {
         try {
             URI uri = URI.create(originalUrl);
             String base = uri.getScheme() + "://" + uri.getAuthority();
-            String[] candidatePaths = {"/openapi.json", "/v3/api-docs", "/v2/swagger.json", "/swagger.json"};
-            for (String path : candidatePaths) {
+            java.util.List<String> candidates = new java.util.ArrayList<>();
+
+            // 1. Regex parse HTML for spec URLs inside Swagger UI / ReDoc scripts/attributes
+            if (htmlContent != null && !htmlContent.isBlank()) {
+                java.util.regex.Pattern p = java.util.regex.Pattern.compile("(?:url|spec-url)\\s*[:=]\\s*['\"]([^'\"]+)['\"]", java.util.regex.Pattern.CASE_INSENSITIVE);
+                java.util.regex.Matcher m = p.matcher(htmlContent);
+                while (m.find()) {
+                    String extracted = m.group(1).trim();
+                    if (!extracted.startsWith("http://") && !extracted.startsWith("https://")) {
+                        extracted = uri.resolve(extracted).toString();
+                    }
+                    if (!candidates.contains(extracted)) {
+                        candidates.add(extracted);
+                    }
+                }
+            }
+
+            // 2. Standard fallback candidate paths
+            String[] defaultPaths = {"/openapi.json", "/v3/api-docs", "/v2/swagger.json", "/swagger.json"};
+            for (String p : defaultPaths) {
+                String c = base + p;
+                if (!candidates.contains(c)) candidates.add(c);
+            }
+
+            for (String candidateUrl : candidates) {
                 try {
-                    String candidateUrl = base + path;
                     SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(candidateUrl);
                     HttpResponseData resp = executePinnedGet(target, 5);
                     if (resp.statusCode == 200) {
@@ -231,5 +253,9 @@ public class OpenApiFetchService {
         } catch (Exception ignored) {
         }
         return null;
+    }
+
+    private String attemptAutoResolveSpec(String originalUrl) {
+        return attemptAutoResolveSpec(originalUrl, null);
     }
 }

@@ -12,6 +12,7 @@ import com.syed.apiqa.discovery.OpenApiParserService;
 import com.syed.apiqa.performance.PerformanceAnalyticsService;
 import com.syed.apiqa.persistence.*;
 import com.syed.apiqa.planning.TestPlanService;
+import io.swagger.v3.oas.models.media.Schema;
 import com.syed.apiqa.regression.HistoricalRegressionService;
 import com.syed.apiqa.reporting.HtmlReportGenerator;
 import org.slf4j.Logger;
@@ -280,7 +281,10 @@ public class RunManager {
                 dependencyRepository.save(dep);
             }
 
-            TestPlanService.PlanResult plan = testPlanService.buildTestPlan(run, discovery.getEndpoints(), dependencies);
+            Map<String, Schema> schemas = (discovery.getOpenAPI() != null && discovery.getOpenAPI().getComponents() != null)
+                    ? discovery.getOpenAPI().getComponents().getSchemas()
+                    : null;
+            TestPlanService.PlanResult plan = testPlanService.buildTestPlan(run, discovery.getEndpoints(), dependencies, schemas);
             int totalStepsCount = 0;
 
             for (TestCase tc : plan.getTestCases()) {

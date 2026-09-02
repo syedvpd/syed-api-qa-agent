@@ -26,8 +26,43 @@ public class DeterministicDataGenerator {
     }
 
     public Object generateValueForSchema(Schema<?> schema, String propertyName, Random random, String runIdPrefix) {
+        return generateValueForSchema(schema, propertyName, random, runIdPrefix, null);
+    }
+
+    public Object generateValueForSchema(Schema<?> schema, String propertyName, Random random, String runIdPrefix, Map<String, Schema> openApiSchemas) {
         if (schema == null) {
             return "test_val_" + Math.abs(random.nextInt(10000));
+        }
+
+        // 0. Dereference $ref if present
+        if (schema.get$ref() != null && openApiSchemas != null) {
+            String refKey = schema.get$ref().substring(schema.get$ref().lastIndexOf('/') + 1);
+            Schema<?> target = openApiSchemas.get(refKey);
+            if (target != null) {
+                return generateValueForSchema(target, propertyName, random, runIdPrefix, openApiSchemas);
+            }
+        }
+
+        // Handle ComposedSchema (allOf, oneOf, anyOf)
+        if (schema instanceof io.swagger.v3.oas.models.media.ComposedSchema composed) {
+            if (composed.getAllOf() != null && !composed.getAllOf().isEmpty()) {
+                Map<String, Object> merged = new LinkedHashMap<>();
+                for (Schema<?> sub : composed.getAllOf()) {
+                    Object val = generateValueForSchema(sub, propertyName, random, runIdPrefix, openApiSchemas);
+                    if (val instanceof Map<?, ?> m) {
+                        for (Map.Entry<?, ?> e : m.entrySet()) {
+                            merged.put(String.valueOf(e.getKey()), e.getValue());
+                        }
+                    }
+                }
+                return merged;
+            }
+            if (composed.getOneOf() != null && !composed.getOneOf().isEmpty()) {
+                return generateValueForSchema(composed.getOneOf().get(0), propertyName, random, runIdPrefix, openApiSchemas);
+            }
+            if (composed.getAnyOf() != null && !composed.getAnyOf().isEmpty()) {
+                return generateValueForSchema(composed.getAnyOf().get(0), propertyName, random, runIdPrefix, openApiSchemas);
+            }
         }
 
         // 1. If explicit example or default exists, prefer it
@@ -48,7 +83,6 @@ public class DeterministicDataGenerator {
         String format = schema.getFormat();
 
         if (type == null) {
-            // Attempt to infer from format or property name
             if (schema.getProperties() != null) type = "object";
             else if (schema.getItems() != null) type = "array";
             else type = "string";
@@ -64,9 +98,9 @@ public class DeterministicDataGenerator {
             case "boolean":
                 return random.nextBoolean();
             case "array":
-                return generateArray(schema, propertyName, random, runIdPrefix);
+                return generateArray(schema, propertyName, random, runIdPrefix, openApiSchemas);
             case "object":
-                return generateObject(schema, random, runIdPrefix);
+                return generateObject(schema, random, runIdPrefix, openApiSchemas);
             default:
                 return "test_" + (propertyName != null ? propertyName : "val") + "_" + Math.abs(random.nextInt(1000));
         }
@@ -145,7 +179,7 @@ public class DeterministicDataGenerator {
         return Math.round(val * 100.0) / 100.0;
     }
 
-    private List<Object> generateArray(Schema<?> schema, String propertyName, Random random, String runIdPrefix) {
+    private List<Object> generateArray(Schema<?> schema, String propertyName, Random random, String runIdPrefix, Map<String, Schema> openApiSchemas) {
         List<Object> list = new ArrayList<>();
         Schema<?> itemsSchema = schema.getItems();
         int count = schema.getMinItems() != null ? Math.max(1, schema.getMinItems()) : 1;
@@ -157,11 +191,11 @@ public class DeterministicDataGenerator {
         Set<Object> seen = (uniqueItems != null && uniqueItems) ? new LinkedHashSet<>() : null;
 
         for (int i = 0; i < count; i++) {
-            Object val = generateValueForSchema(itemsSchema, propertyName + "_item", random, runIdPrefix);
+            Object val = generateValueForSchema(itemsSchema, propertyName + "_item", random, runIdPrefix, openApiSchemas);
             if (seen != null) {
                 int attempts = 0;
                 while (seen.contains(val) && attempts < 10) {
-                    val = generateValueForSchema(itemsSchema, propertyName + "_item_" + attempts, random, runIdPrefix);
+                    val = generateValueForSchema(itemsSchema, propertyName + "_item_" + attempts, random, runIdPrefix, openApiSchemas);
                     attempts++;
                 }
                 seen.add(val);
@@ -174,9 +208,19 @@ public class DeterministicDataGenerator {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> generateObject(Schema<?> schema, Random random, String runIdPrefix) {
+    public Map<String, Object> generateObject(Schema<?> schema, Random random, String runIdPrefix, Map<String, Schema> openApiSchemas) {
         Map<String, Object> map = new LinkedHashMap<>();
-        if (schema == null || schema.getProperties() == null) {
+        if (schema == null) return map;
+
+        if (schema.get$ref() != null && openApiSchemas != null) {
+            String refKey = schema.get$ref().substring(schema.get$ref().lastIndexOf('/') + 1);
+            Schema<?> target = openApiSchemas.get(refKey);
+            if (target != null) {
+                return generateObject(target, random, runIdPrefix, openApiSchemas);
+            }
+        }
+
+        if (schema.getProperties() == null) {
             return map;
         }
 
@@ -187,22 +231,29 @@ public class DeterministicDataGenerator {
             String propName = entry.getKey();
             Schema propSchema = entry.getValue();
 
-            // Always generate required properties; generate optional properties with 75% probability
             boolean isRequired = required.contains(propName);
             if (isRequired || random.nextInt(100) < 75) {
-                Object val = generateValueForSchema(propSchema, propName, random, runIdPrefix);
+                Object val = generateValueForSchema(propSchema, propName, random, runIdPrefix, openApiSchemas);
                 map.put(propName, val);
             }
         }
         return map;
     }
 
+    public Map<String, Object> generateObject(Schema<?> schema, Random random, String runIdPrefix) {
+        return generateObject(schema, random, runIdPrefix, null);
+    }
+
     public String generateJsonString(Schema<?> schema, String runId) {
+        return generateJsonString(schema, runId, null);
+    }
+
+    public String generateJsonString(Schema<?> schema, String runId, Map<String, Schema> openApiSchemas) {
         long seed = (runId != null ? runId.hashCode() : 42L);
         Random random = new Random(seed);
         String prefix = runId != null && runId.length() >= 6 ? runId.substring(0, 6) : "test";
 
-        Object data = generateValueForSchema(schema, "root", random, prefix);
+        Object data = generateValueForSchema(schema, "root", random, prefix, openApiSchemas);
         try {
             return objectMapper.writeValueAsString(data);
         } catch (Exception e) {

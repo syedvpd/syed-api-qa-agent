@@ -58,6 +58,10 @@ public class TestPlanService {
     }
 
     public PlanResult buildTestPlan(TestRun testRun, List<ApiEndpoint> endpoints, List<Dependency> dependencies) {
+        return buildTestPlan(testRun, endpoints, dependencies, null);
+    }
+
+    public PlanResult buildTestPlan(TestRun testRun, List<ApiEndpoint> endpoints, List<Dependency> dependencies, Map<String, Schema> openApiSchemas) {
         List<TestCase> testCases = new ArrayList<>();
         Map<String, List<TestStep>> stepsByCaseId = new HashMap<>();
 
@@ -231,7 +235,7 @@ public class TestPlanService {
 
                 try {
                     Schema<?> schema = objectMapper.readValue(ep.getRequestBodySchema(), Schema.class);
-                    String validBody = dataGenerator.generateJsonString(schema, testRun.getId());
+                    String validBody = dataGenerator.generateJsonString(schema, testRun.getId(), openApiSchemas);
                     List<NegativeDataGenerator.NegativePayload> negativeVariants = negativeGenerator.generateNegativeVariants(validBody, ep.getRequestBodySchema());
                     if (negativeVariants.size() > MAX_NEGATIVE_PER_EP) {
                         negativeVariants = negativeVariants.subList(0, MAX_NEGATIVE_PER_EP);
@@ -309,6 +313,12 @@ public class TestPlanService {
 
     private TestStep createStepWithParams(TestCase testCase, ApiEndpoint endpoint, int order, String name,
                                           String method, String initialPath, int expectedStatus, String runId, String entityName) {
+        return createStepWithParams(testCase, endpoint, order, name, method, initialPath, expectedStatus, runId, entityName, null);
+    }
+
+    private TestStep createStepWithParams(TestCase testCase, ApiEndpoint endpoint, int order, String name,
+                                          String method, String initialPath, int expectedStatus, String runId, String entityName,
+                                          Map<String, Schema> openApiSchemas) {
         TestStep step = new TestStep();
         step.setId(UUID.randomUUID().toString());
         step.setTestCase(testCase);
@@ -400,7 +410,7 @@ public class TestPlanService {
                 && endpoint.getRequestBodySchema() != null) {
             try {
                 Schema<?> schema = objectMapper.readValue(endpoint.getRequestBodySchema(), Schema.class);
-                String bodyJson = dataGenerator.generateJsonString(schema, runId);
+                String bodyJson = dataGenerator.generateJsonString(schema, runId, openApiSchemas);
                 step.setRequestBody(bodyJson);
             } catch (Exception e) {
                 step.setRequestBody("{}");
