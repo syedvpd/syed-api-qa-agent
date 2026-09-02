@@ -6,7 +6,7 @@ import { getApiBaseUrl, authenticatedFetch } from "@/lib/api";
 
 export default function NewRunPage() {
   const [openapiUrl, setOpenapiUrl] = useState("");
-  const [environmentType, setEnvironmentType] = useState("LOCAL");
+  const [environmentType, setEnvironmentType] = useState<"DEVELOPMENT" | "STAGING" | "PRODUCTION">("STAGING");
   const [authType, setAuthType] = useState("NONE");
   const [authToken, setAuthToken] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -41,7 +41,7 @@ export default function NewRunPage() {
         }
       }
     } catch (err: any) {
-      setStatusMsg(`Connection note: Backend API reachable at ${apiBase} (${err.message}).`);
+      setStatusMsg(`Network error contacting backend at ${apiBase}: ${err.message || "Connection refused"}. Please verify backend is running.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -71,14 +71,27 @@ export default function NewRunPage() {
             className="w-full px-4 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 text-sm font-mono"
           />
           <p className="text-xs text-slate-500">
-            Must be a publicly reachable HTTP/HTTPS endpoint. SSRF guard strictly blocks loopback and private IPs.
+            Public HTTP/HTTPS endpoint or local dev endpoint (in Development profile).
           </p>
         </div>
 
         {/* Environment Selection */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-slate-200">Target Environment Profile</label>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-3">
+            <button
+              type="button"
+              onClick={() => setEnvironmentType("DEVELOPMENT")}
+              className={`p-3 rounded-lg border text-left transition-all ${
+                environmentType === "DEVELOPMENT"
+                  ? "border-blue-500 bg-blue-500/10 text-white"
+                  : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
+              }`}
+            >
+              <div className="font-semibold text-xs">Local / Dev</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">Permits localhost & private targets.</div>
+            </button>
+
             <button
               type="button"
               onClick={() => setEnvironmentType("STAGING")}
@@ -88,8 +101,8 @@ export default function NewRunPage() {
                   : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
               }`}
             >
-              <div className="font-semibold text-sm">Staging / QA</div>
-              <div className="text-xs text-slate-500 mt-0.5">Full CRUD & automated cleanup enabled.</div>
+              <div className="font-semibold text-xs">Staging / QA</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">Full CRUD & automated cleanup.</div>
             </button>
 
             <button
@@ -101,11 +114,11 @@ export default function NewRunPage() {
                   : "border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700"
               }`}
             >
-              <div className="font-semibold text-sm flex items-center space-x-1">
-                <span>Production Mode</span>
-                <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
+              <div className="font-semibold text-xs flex items-center space-x-1">
+                <span>Production</span>
+                <ShieldCheck className="h-3 w-3 text-amber-400" />
               </div>
-              <div className="text-xs text-slate-500 mt-0.5">DELETE disabled by default. Safe rate limits.</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">DELETE disabled by default.</div>
             </button>
           </div>
         </div>

@@ -51,6 +51,11 @@ public class ScheduleExecutionService {
         for (TestSchedule schedule : enabledSchedules) {
             if (schedule.getNextRunAt() == null || schedule.getNextRunAt().isBefore(now)) {
                 try {
+                    // Advance nextRunAt immediately as an optimistic lock against double-dispatch
+                    schedule.setLastRunAt(now);
+                    schedule.setNextRunAt(computeNextRun(schedule, now));
+                    testScheduleRepository.save(schedule);
+
                     executeScheduleNow(schedule);
                 } catch (Exception e) {
                     log.error("Failed to execute scheduled job {}: {}", schedule.getId(), e.getMessage(), e);
@@ -63,13 +68,19 @@ public class ScheduleExecutionService {
      * Dispatches a scheduled run immediately and computes next due timestamp.
      */
     public TestRun executeScheduleNow(TestSchedule schedule) {
-        // Enforce SSRF protection before dispatch
-        ssrfGuard.validateTargetUrl(schedule.getOpenapiUrl());
-
         EnvironmentType envType = EnvironmentType.STAGING;
         try {
-            envType = EnvironmentType.valueOf(schedule.getEnvironment().toUpperCase());
+            String envStr = schedule.getEnvironment();
+            if ("LOCAL".equalsIgnoreCase(envStr)) {
+                envType = EnvironmentType.DEVELOPMENT;
+            } else if (envStr != null) {
+                envType = EnvironmentType.valueOf(envStr.toUpperCase());
+            }
         } catch (Exception ignored) {}
+
+        // Enforce SSRF protection before dispatch
+        boolean allowLocal = (envType == EnvironmentType.DEVELOPMENT) || ssrfGuard.isAllowLocalTargets();
+        ssrfGuard.validateTargetUrl(schedule.getOpenapiUrl(), allowLocal);
 
         TestRun run = new TestRun(UUID.randomUUID().toString(), schedule.getOpenapiUrl(), envType);
         run.setOwnerId(schedule.getOwnerId());

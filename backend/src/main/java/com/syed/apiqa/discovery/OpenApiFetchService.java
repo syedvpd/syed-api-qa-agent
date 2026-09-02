@@ -47,12 +47,8 @@ public class OpenApiFetchService {
         while (redirects < 5) {
             try {
                 // 1. Enforce strict SSRF & Anti-DNS Rebinding IP validation before connecting
-                ssrfGuard.validateTargetUrl(currentUrl);
-
-                URL url = URI.create(currentUrl).toURL();
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                connection.setConnectTimeout(timeoutSeconds * 1000);
-                connection.setReadTimeout(timeoutSeconds * 1000);
+                SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(currentUrl);
+                HttpURLConnection connection = com.syed.apiqa.safety.PinnedConnectionManager.openPinnedConnection(target, timeoutSeconds);
                 connection.setInstanceFollowRedirects(false);
 
                 connection.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
@@ -120,11 +116,8 @@ public class OpenApiFetchService {
             for (String path : candidatePaths) {
                 try {
                     String candidateUrl = base + path;
-                    ssrfGuard.validateTargetUrl(candidateUrl);
-                    URL u = URI.create(candidateUrl).toURL();
-                    HttpURLConnection conn = (HttpURLConnection) u.openConnection();
-                    conn.setConnectTimeout(5000);
-                    conn.setReadTimeout(5000);
+                    SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(candidateUrl);
+                    HttpURLConnection conn = com.syed.apiqa.safety.PinnedConnectionManager.openPinnedConnection(target, 5);
                     conn.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
                     conn.setRequestProperty("Accept", "application/json");
                     if (conn.getResponseCode() == 200) {

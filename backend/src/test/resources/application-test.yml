@@ -20,6 +20,8 @@ spring:
 syed:
   safety:
     ssrf-protection-enabled: false # Disabled for integration tests targeting local WireMock mock server
+    allow-local-targets: true
+    max-concurrency: 5
     production-delete-enabled: false
     default-timeout-seconds: 5
   security:

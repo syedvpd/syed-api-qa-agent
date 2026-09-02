@@ -24,14 +24,16 @@ spring:
 
 syed:
   safety:
-    ssrf-protection-enabled: true
+    ssrf-protection-enabled: ${SYED_SAFETY_SSRF_PROTECTION_ENABLED:true}
+    allow-local-targets: ${SYED_SAFETY_ALLOW_LOCAL_TARGETS:false}
     production-delete-enabled: false
-    max-concurrency: 10
+    max-concurrency: ${SYED_SAFETY_MAX_CONCURRENCY:5}
     default-timeout-seconds: 15
     max-response-size-bytes: 2097152 # 2MB
   security:
-    auth-enabled: true
+    auth-enabled: ${SYED_SECURITY_AUTH_ENABLED:true}
     test-mode: false
+    ci-api-key: ${SYED_SECURITY_CI_API_KEY:ci-pipeline-default-secret-key-32b}
     allowed-origins: ${SYED_SECURITY_ALLOWED_ORIGINS:https://*.vercel.app,https://syed-api-agent.vercel.app,http://localhost:3000,http://127.0.0.1:3000}
     auth-secret: ${SYED_AUTH_SECRET:dev-insecure-auth-secret-change-in-production-32b}
     encryption-key: ${SYED_ENCRYPTION_KEY:dev-insecure-encryption-key-change-in-production}

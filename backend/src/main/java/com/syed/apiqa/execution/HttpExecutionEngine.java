@@ -120,7 +120,8 @@ public class HttpExecutionEngine {
         // 3. SSRF & Safety Pre-Check with Anti-DNS Rebinding IP Pinning
         SsrfProtectionGuard.ValidatedTarget validatedTarget;
         try {
-            validatedTarget = ssrfGuard.resolveAndValidate(fullUrl);
+            boolean allowLocal = (envType == EnvironmentType.DEVELOPMENT) || ssrfGuard.isAllowLocalTargets();
+            validatedTarget = ssrfGuard.resolveAndValidate(fullUrl, allowLocal);
         } catch (SecurityException | IllegalArgumentException e) {
             step.setStatus(StepStatus.FAILED);
             step.setFailureReason("SSRF Guard violation: " + e.getMessage());
@@ -155,7 +156,7 @@ public class HttpExecutionEngine {
         execution.setId(UUID.randomUUID().toString());
         execution.setTestStep(step);
         execution.setMethod(method);
-        execution.setRequestUrl(targetUrl);
+        execution.setRequestUrl(secretMasker.maskUrl(targetUrl));
         execution.setRequestBody(secretMasker.maskBody(requestBody));
 
         OffsetDateTime startedAt = OffsetDateTime.now();

@@ -35,7 +35,6 @@ import java.util.concurrent.TimeUnit;
 public class RunManager {
 
     private static final Logger log = LoggerFactory.getLogger(RunManager.class);
-    private static final int MAX_CONCURRENT_RUNS = 5;
 
     private final OpenApiFetchService fetchService;
     private final OpenApiParserService parserService;
@@ -57,9 +56,11 @@ public class RunManager {
     private final ExecutionRepository executionRepository;
     private final RunAuditEventRepository auditEventRepository;
     private final com.syed.apiqa.coverage.CoverageCalculationService coverageCalculationService;
+    private final com.syed.apiqa.safety.SecretMasker secretMasker;
 
-    // Concurrency limiter: strictly bounds simultaneous active test runs
-    private final Semaphore concurrencyLimiter = new Semaphore(MAX_CONCURRENT_RUNS, true);
+    // Concurrency limiter: dynamically configured via syed.safety.max-concurrency
+    private final int maxConcurrency;
+    private final Semaphore concurrencyLimiter;
 
     // Active lifecycle control flags
     private final Map<String, Boolean> cancellationFlags = new ConcurrentHashMap<>();
@@ -84,7 +85,9 @@ public class RunManager {
                       TestStepRepository testStepRepository,
                       ExecutionRepository executionRepository,
                       RunAuditEventRepository auditEventRepository,
-                      com.syed.apiqa.coverage.CoverageCalculationService coverageCalculationService) {
+                      com.syed.apiqa.coverage.CoverageCalculationService coverageCalculationService,
+                      @org.springframework.beans.factory.annotation.Value("${syed.safety.max-concurrency:5}") int maxConcurrency,
+                      com.syed.apiqa.safety.SecretMasker secretMasker) {
         this.fetchService = fetchService;
         this.parserService = parserService;
         this.dependencyEngine = dependencyEngine;
@@ -105,6 +108,9 @@ public class RunManager {
         this.executionRepository = executionRepository;
         this.auditEventRepository = auditEventRepository;
         this.coverageCalculationService = coverageCalculationService;
+        this.maxConcurrency = maxConcurrency > 0 ? maxConcurrency : 5;
+        this.concurrencyLimiter = new Semaphore(this.maxConcurrency, true);
+        this.secretMasker = secretMasker;
     }
 
     /**
@@ -219,9 +225,9 @@ public class RunManager {
         }
 
         if (!permitAcquired) {
-            log.warn("Concurrency limit reached (Max {} concurrent runs). Rejecting run {}.", MAX_CONCURRENT_RUNS, testRunId);
+            log.warn("Concurrency limit reached (Max {} concurrent runs). Rejecting run {}.", maxConcurrency, testRunId);
             run.setStatus(RunStatus.FAILED);
-            run.setErrorMessage("CONCURRENCY_LIMIT_EXCEEDED (Max " + MAX_CONCURRENT_RUNS + " concurrent runs)");
+            run.setErrorMessage("CONCURRENCY_LIMIT_EXCEEDED (Max " + maxConcurrency + " concurrent runs)");
             run.setCompletedAt(OffsetDateTime.now());
             testRunRepository.save(run);
             sseEventService.publishEvent(run.getId(), "RUN_FAILED", Map.of("error", run.getErrorMessage()));

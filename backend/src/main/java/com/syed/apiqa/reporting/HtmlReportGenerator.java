@@ -23,6 +23,7 @@ public class HtmlReportGenerator {
     private final AssertionResultRepository assertionResultRepository;
     private final ReportRepository reportRepository;
     private final ObjectMapper objectMapper;
+    private final com.syed.apiqa.safety.SecretMasker secretMasker;
 
     public HtmlReportGenerator(ApiEndpointRepository apiEndpointRepository,
                                TestCaseRepository testCaseRepository,
@@ -30,7 +31,8 @@ public class HtmlReportGenerator {
                                ExecutionRepository executionRepository,
                                AssertionResultRepository assertionResultRepository,
                                ReportRepository reportRepository,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               com.syed.apiqa.safety.SecretMasker secretMasker) {
         this.apiEndpointRepository = apiEndpointRepository;
         this.testCaseRepository = testCaseRepository;
         this.testStepRepository = testStepRepository;
@@ -38,6 +40,7 @@ public class HtmlReportGenerator {
         this.assertionResultRepository = assertionResultRepository;
         this.reportRepository = reportRepository;
         this.objectMapper = objectMapper;
+        this.secretMasker = secretMasker;
     }
 
     public Report generateAndSaveReport(TestRun testRun) {
@@ -80,7 +83,7 @@ public class HtmlReportGenerator {
                 tableRows.append(String.format(
                         "<tr><td class='font-mono'>%s</td><td class='font-mono text-sm'>%s</td><td>%s</td><td>%s</td><td>%d ms</td><td>%s</td></tr>",
                         methodBadge,
-                        escapeHtml(step.getResolvedUrl() != null ? step.getResolvedUrl() : step.getPathTemplate()),
+                        escapeHtml(secretMasker.maskUrl(step.getResolvedUrl() != null ? step.getResolvedUrl() : step.getPathTemplate())),
                         step.getExpectedStatus() != null ? step.getExpectedStatus() : "-",
                         (exec != null && exec.getResponseStatus() != null) ? exec.getResponseStatus() : "-",
                         latency,
@@ -105,6 +108,7 @@ public class HtmlReportGenerator {
                             "<div class='evidence-card'>" +
                                     "<div class='evidence-header'><span>%s %s</span><span>Status: %s &bull; %d ms</span></div>" +
                                     "<div class='p-4 space-y-2 text-xs font-mono'>" +
+                                    (exec.getRequestUrl() != null ? "<div><strong class='text-slate-400'>Request URL:</strong> <span class='text-slate-300'>" + escapeHtml(secretMasker.maskUrl(exec.getRequestUrl())) + "</span></div>" : "") +
                                     "<div><strong class='text-slate-400'>Assertions:</strong><br/>%s</div>" +
                                     "<div class='mt-2'><strong class='text-slate-400'>Request Headers:</strong><pre class='code-box'>%s</pre></div>" +
                                     (exec.getRequestBody() != null && !exec.getRequestBody().isBlank() ? "<div class='mt-2'><strong class='text-slate-400'>Request Body:</strong><pre class='code-box'>" + escapeHtml(exec.getRequestBody()) + "</pre></div>" : "") +

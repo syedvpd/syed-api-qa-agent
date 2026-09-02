@@ -19,24 +19,36 @@ export function getApiBaseUrl(): string {
 }
 
 /**
- * Proactively provisions a cryptographic Bearer token from the public /api/auth/token endpoint
- * and caches it in localStorage.
+ * Proactively provisions a unique cryptographic Bearer token from /api/auth/token
+ * and caches the user's isolated identity and token in localStorage.
+ * Each browser receives its own isolated, non-forgeable identity.
  */
 export async function getOrCreateAuthToken(): Promise<string> {
   if (typeof window === "undefined") return "";
   let token = localStorage.getItem("syed_auth_token");
   if (token) return token;
+
+  const storedUserId = localStorage.getItem("syed_user_id");
+  const storedUserSecret = localStorage.getItem("syed_user_secret");
+
   try {
     const apiBase = getApiBaseUrl();
+    const payload = storedUserId && storedUserSecret
+      ? { userId: storedUserId, userSecret: storedUserSecret }
+      : {};
+
     const res = await fetch(`${apiBase}/api/auth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "web-client" }),
+      body: JSON.stringify(payload),
     });
+
     if (res.ok) {
       const data = await res.json();
       if (data.token) {
         localStorage.setItem("syed_auth_token", data.token);
+        if (data.userId) localStorage.setItem("syed_user_id", data.userId);
+        if (data.userSecret) localStorage.setItem("syed_user_secret", data.userSecret);
         return data.token;
       }
     }

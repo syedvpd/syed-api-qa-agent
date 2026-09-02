@@ -73,9 +73,13 @@ public class SseEventService {
 
         List<SseEmitter> emitters = emittersByRunId.get(testRunId);
         if (emitters == null || emitters.isEmpty()) {
-            // If terminal and no subscribers, evict backlog immediately to free memory
+            // If terminal and no subscribers, schedule deferred cleanup (60s) so late subscribers can still replay
             if (TERMINAL_EVENTS.contains(eventType)) {
-                eventBacklogByRunId.remove(testRunId);
+                new Thread(() -> {
+                    try { Thread.sleep(60_000); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    eventBacklogByRunId.remove(testRunId);
+                    emittersByRunId.remove(testRunId);
+                }, "sse-cleanup-" + testRunId).start();
             }
             return;
         }

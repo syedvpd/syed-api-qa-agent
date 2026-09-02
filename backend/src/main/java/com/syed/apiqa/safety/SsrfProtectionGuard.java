@@ -11,9 +11,10 @@ import java.util.List;
 
 /**
  * SSRF & Private IP Guard with Anti-DNS Rebinding / Pinning Protection.
- * Prevents requests to localhost, loopback (127.0.0.1/8), private RFC 1918 subnets,
- * IPv6 loopbacks/site-local, Carrier-Grade NAT, and cloud instance metadata services (169.254.169.254).
+ * Prevents requests to cloud instance metadata services (169.254.169.254), Carrier-Grade NAT,
+ * and internal subnets.
  *
+ * Provides safe controlled local development support when explicitly enabled.
  * Provides IP pinning via ValidatedTarget to eliminate Time-of-Check to Time-of-Use (TOCTOU)
  * DNS rebinding attacks where an attacker changes DNS records between validation and connection.
  */
@@ -25,13 +26,19 @@ public class SsrfProtectionGuard {
     @Value("${syed.safety.ssrf-protection-enabled:true}")
     private boolean ssrfProtectionEnabled;
 
-    private static final List<String> BLOCKED_HOSTS = Arrays.asList(
-            "localhost",
-            "127.0.0.1",
-            "::1",
+    @Value("${syed.safety.allow-local-targets:false}")
+    private boolean allowLocalTargets;
+
+    private static final List<String> ALWAYS_BLOCKED_HOSTS = Arrays.asList(
             "metadata.google.internal",
             "169.254.169.254",
             "100.100.100.200"
+    );
+
+    private static final List<String> LOCAL_HOSTS = Arrays.asList(
+            "localhost",
+            "127.0.0.1",
+            "::1"
     );
 
     public record ValidatedTarget(
@@ -48,11 +55,27 @@ public class SsrfProtectionGuard {
         return ssrfProtectionEnabled;
     }
 
+    public void setSsrfProtectionEnabled(boolean ssrfProtectionEnabled) {
+        this.ssrfProtectionEnabled = ssrfProtectionEnabled;
+    }
+
+    public boolean isAllowLocalTargets() {
+        return allowLocalTargets;
+    }
+
+    public void setAllowLocalTargets(boolean allowLocalTargets) {
+        this.allowLocalTargets = allowLocalTargets;
+    }
+
     /**
      * Legacy validation method preserving backwards compatibility.
      */
     public void validateTargetUrl(String urlString) {
-        resolveAndValidate(urlString);
+        resolveAndValidate(urlString, this.allowLocalTargets);
+    }
+
+    public void validateTargetUrl(String urlString, boolean allowLocal) {
+        resolveAndValidate(urlString, allowLocal);
     }
 
     /**
@@ -60,6 +83,10 @@ public class SsrfProtectionGuard {
      * and produces a pinned target that connects directly to the validated IP without secondary DNS resolution.
      */
     public ValidatedTarget resolveAndValidate(String urlString) {
+        return resolveAndValidate(urlString, this.allowLocalTargets);
+    }
+
+    public ValidatedTarget resolveAndValidate(String urlString, boolean allowLocal) {
         if (urlString == null || urlString.isBlank()) {
             throw new IllegalArgumentException("Target URL cannot be empty");
         }
@@ -98,8 +125,12 @@ public class SsrfProtectionGuard {
             return new ValidatedTarget(uri, null, host, port, urlString, hostHeader, false);
         }
 
-        if (BLOCKED_HOSTS.contains(host.toLowerCase())) {
+        if (ALWAYS_BLOCKED_HOSTS.contains(host.toLowerCase())) {
             throw new SecurityException("SSRF Guard: Target host is strictly blocked: " + host);
+        }
+
+        if (!allowLocal && LOCAL_HOSTS.contains(host.toLowerCase())) {
+            throw new SecurityException("SSRF Guard: Target host is strictly blocked in production mode: " + host + ". Enable local dev mode to test localhost.");
         }
 
         InetAddress[] addresses;
@@ -115,7 +146,7 @@ public class SsrfProtectionGuard {
 
         // Validate EVERY resolved address. If any address is blocked, reject to prevent multi-A record bypasses
         for (InetAddress address : addresses) {
-            checkAddress(address);
+            checkAddress(address, allowLocal);
         }
 
         // Pin to the first validated address to prevent DNS rebinding
@@ -146,19 +177,7 @@ public class SsrfProtectionGuard {
         return new ValidatedTarget(uri, pinnedAddress, host, port, pinnedUrl, hostHeader, true);
     }
 
-    private void checkAddress(InetAddress address) {
-        if (address.isLoopbackAddress()) {
-            throw new SecurityException("SSRF Guard: Loopback target blocked: " + address.getHostAddress());
-        }
-        if (address.isSiteLocalAddress()) {
-            throw new SecurityException("SSRF Guard: Private network target blocked: " + address.getHostAddress());
-        }
-        if (address.isLinkLocalAddress()) {
-            throw new SecurityException("SSRF Guard: Link-local target blocked: " + address.getHostAddress());
-        }
-        if (address.isAnyLocalAddress()) {
-            throw new SecurityException("SSRF Guard: Wildcard/any-local address blocked: " + address.getHostAddress());
-        }
+    private void checkAddress(InetAddress address, boolean allowLocal) {
         if (isCloudMetadataAddress(address)) {
             throw new SecurityException("SSRF Guard: Cloud metadata IP blocked: " + address.getHostAddress());
         }
@@ -167,6 +186,24 @@ public class SsrfProtectionGuard {
         }
         if (isIpv4MappedIpv6(address)) {
             throw new SecurityException("SSRF Guard: IPv4-mapped IPv6 address blocked: " + address.getHostAddress());
+        }
+        if (address.isLinkLocalAddress()) {
+            throw new SecurityException("SSRF Guard: Link-local target blocked: " + address.getHostAddress());
+        }
+        if (address.isAnyLocalAddress()) {
+            throw new SecurityException("SSRF Guard: Wildcard/any-local address blocked: " + address.getHostAddress());
+        }
+
+        if (allowLocal) {
+            // In explicit local development mode, allow loopback and RFC 1918 private LAN addresses
+            return;
+        }
+
+        if (address.isLoopbackAddress()) {
+            throw new SecurityException("SSRF Guard: Loopback target blocked: " + address.getHostAddress());
+        }
+        if (address.isSiteLocalAddress()) {
+            throw new SecurityException("SSRF Guard: Private network target blocked: " + address.getHostAddress());
         }
         if (isIpv6SiteLocalOrUniqueLocal(address)) {
             throw new SecurityException("SSRF Guard: IPv6 private/unique-local address blocked: " + address.getHostAddress());
@@ -193,19 +230,22 @@ public class SsrfProtectionGuard {
     }
 
     private boolean isIpv4MappedIpv6(InetAddress address) {
-        byte[] bytes = address.getAddress();
-        if (bytes.length == 16) {
-            boolean isMapped = true;
+        if (address instanceof Inet6Address) {
+            byte[] bytes = address.getAddress();
+            // IPv4-mapped IPv6 format: ::ffff:192.0.2.128 (first 10 bytes 0, next 2 bytes 0xFF)
             for (int i = 0; i < 10; i++) {
-                if (bytes[i] != 0) { isMapped = false; break; }
+                if (bytes[i] != 0) return false;
             }
-            if (isMapped && (bytes[10] & 0xFF) == 0xFF && (bytes[11] & 0xFF) == 0xFF) {
-                // Extract mapped IPv4
-                try {
-                    byte[] ipv4Bytes = Arrays.copyOfRange(bytes, 12, 16);
-                    InetAddress ipv4 = InetAddress.getByAddress(ipv4Bytes);
-                    checkAddress(ipv4);
-                } catch (UnknownHostException ignored) {}
+            if ((bytes[10] & 0xFF) != 0xFF || (bytes[11] & 0xFF) != 0xFF) {
+                return false;
+            }
+            // Extract the embedded IPv4 address and check it
+            try {
+                byte[] ipv4Bytes = new byte[4];
+                System.arraycopy(bytes, 12, ipv4Bytes, 0, 4);
+                InetAddress embeddedIpv4 = InetAddress.getByAddress(ipv4Bytes);
+                return embeddedIpv4.isLoopbackAddress() || embeddedIpv4.isSiteLocalAddress();
+            } catch (UnknownHostException e) {
                 return true;
             }
         }
@@ -213,11 +253,11 @@ public class SsrfProtectionGuard {
     }
 
     private boolean isIpv6SiteLocalOrUniqueLocal(InetAddress address) {
-        byte[] bytes = address.getAddress();
-        if (bytes.length == 16) {
-            int first = bytes[0] & 0xFF;
-            // fc00::/7 (fc00 - fdff)
-            return (first & 0xFE) == 0xFC;
+        if (address instanceof Inet6Address) {
+            byte[] bytes = address.getAddress();
+            // fc00::/7 unique local addresses (ULA)
+            int firstByte = bytes[0] & 0xFF;
+            return (firstByte & 0xFE) == 0xFC;
         }
         return false;
     }

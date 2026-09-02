@@ -79,7 +79,24 @@ public class AssertionEngine {
             results.add(statusAssertion);
         }
 
-        // 2. Content-Type Assertion (for successful responses with body)
+        // 2. Body Existence Assertion (for HTTP 200 / 201 expecting payload)
+        if (execution.getResponseStatus() != null &&
+                (execution.getResponseStatus() == 200 || execution.getResponseStatus() == 201) &&
+                (execution.getResponseBody() == null || execution.getResponseBody().isBlank())) {
+            AssertionResult emptyBodyAssertion = new AssertionResult();
+            emptyBodyAssertion.setId(UUID.randomUUID().toString());
+            emptyBodyAssertion.setExecution(execution);
+            emptyBodyAssertion.setAssertionType(AssertionType.JSON_SCHEMA);
+            emptyBodyAssertion.setTargetField("body");
+            emptyBodyAssertion.setExpectedValue("Non-empty JSON entity representation");
+            emptyBodyAssertion.setActualValue("Empty/Missing body");
+            emptyBodyAssertion.setPassed(false);
+            emptyBodyAssertion.setMessage("Contract violation: Endpoint returned HTTP " + execution.getResponseStatus() +
+                    " with an empty response body when a valid entity representation was expected.");
+            results.add(emptyBodyAssertion);
+        }
+
+        // 3. Content-Type & JSON Schema Assertion (for successful responses with body)
         if (execution.getResponseBody() != null && !execution.getResponseBody().isBlank() &&
                 execution.getResponseStatus() != null && execution.getResponseStatus() >= 200 && execution.getResponseStatus() < 300) {
 

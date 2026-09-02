@@ -112,7 +112,7 @@ public class TestRunController {
         }
 
         String openapiUrl = request.get("openapiUrl");
-        String envTypeStr = request.getOrDefault("environmentType", "STAGING");
+        String envTypeStr = request.getOrDefault("environmentType", request.getOrDefault("environment", "STAGING"));
         String authType = request.getOrDefault("authType", "NONE");
         String authCredentials = request.get("authCredentials");
 
@@ -120,17 +120,22 @@ public class TestRunController {
             return ResponseEntity.badRequest().body(Map.of("error", "openapiUrl is required"));
         }
 
-        // Validate target URL against SSRF and private IP blocklist
+        EnvironmentType environmentType = EnvironmentType.STAGING;
         try {
-            ssrfGuard.validateTargetUrl(openapiUrl);
+            if ("LOCAL".equalsIgnoreCase(envTypeStr)) {
+                environmentType = EnvironmentType.DEVELOPMENT;
+            } else if (envTypeStr != null) {
+                environmentType = EnvironmentType.valueOf(envTypeStr.toUpperCase());
+            }
+        } catch (IllegalArgumentException ignored) {}
+
+        // Validate target URL against SSRF and private IP blocklist (allow local if DEVELOPMENT mode or configured)
+        boolean allowLocal = (environmentType == EnvironmentType.DEVELOPMENT) || ssrfGuard.isAllowLocalTargets();
+        try {
+            ssrfGuard.validateTargetUrl(openapiUrl, allowLocal);
         } catch (SecurityException | IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
-
-        EnvironmentType environmentType = EnvironmentType.STAGING;
-        try {
-            environmentType = EnvironmentType.valueOf(envTypeStr.toUpperCase());
-        } catch (IllegalArgumentException ignored) {}
 
         String requesterId = resolveRequesterId(userId, principal);
         TestRun run = new TestRun(UUID.randomUUID().toString(), openapiUrl, environmentType);

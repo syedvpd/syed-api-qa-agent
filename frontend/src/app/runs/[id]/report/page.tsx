@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Download, ShieldCheck, FileText, AlertTriangle, AlertCircle, Loader2 } from "lucide-react";
-import { getApiBaseUrl } from "@/lib/api";
+import { getApiBaseUrl, authenticatedFetch } from "@/lib/api";
 
 export default function RunReportPage({ params }: { params: { id: string } }) {
   const [reportHtml, setReportHtml] = useState<string | null>(null);
@@ -17,7 +17,7 @@ export default function RunReportPage({ params }: { params: { id: string } }) {
     setLoading(true);
     setErrorMessage(null);
 
-    fetch(`${apiBase}/api/runs/${params.id}/report`)
+    authenticatedFetch(`${apiBase}/api/runs/${params.id}/report`)
       .then((res) => {
         if (!res.ok) {
           setStatusError(res.status);
@@ -58,7 +58,7 @@ export default function RunReportPage({ params }: { params: { id: string } }) {
     setErrorMessage(null);
 
     try {
-      const res = await fetch(`${apiBase}/api/runs/${params.id}/report/pdf`);
+      const res = await authenticatedFetch(`${apiBase}/api/runs/${params.id}/report/pdf`);
       if (!res.ok) {
         if (res.status === 401) {
           throw new Error("Authentication required to download PDF report.");

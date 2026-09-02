@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -65,27 +66,25 @@ public class DynamicAuthService {
 
         try {
             SsrfProtectionGuard.ValidatedTarget target = ssrfGuard.resolveAndValidate(loginUrl);
+            HttpURLConnection conn = com.syed.apiqa.safety.PinnedConnectionManager.openPinnedConnection(target, 15);
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setRequestProperty("User-Agent", "Syed-API-QA-Agent/1.0");
+            conn.setRequestProperty("Accept", "application/json");
 
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(target.pinnedUrl()))
-                    .timeout(Duration.ofSeconds(15))
-                    .header("Content-Type", "application/json; charset=UTF-8")
-                    .header("User-Agent", "Syed-API-QA-Agent/1.0")
-                    .header("Accept", "application/json");
-
-            if (target.isPinned()) {
-                reqBuilder.header("Host", target.originalHostHeader());
+            if (payload != null && !payload.isBlank()) {
+                conn.setDoOutput(true);
+                try (java.io.OutputStream os = conn.getOutputStream()) {
+                    os.write(payload.getBytes(StandardCharsets.UTF_8));
+                }
             }
 
-            HttpRequest.BodyPublisher body = (payload != null && !payload.isBlank())
-                    ? HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8)
-                    : HttpRequest.BodyPublishers.noBody();
+            int statusCode = conn.getResponseCode();
+            java.io.InputStream in = (statusCode >= 200 && statusCode < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String responseBody = in != null ? new String(in.readAllBytes(), StandardCharsets.UTF_8) : "";
 
-            HttpRequest request = reqBuilder.POST(body).build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                String token = extractToken(response.body(), tokenPath);
+            if (statusCode >= 200 && statusCode < 300) {
+                String token = extractToken(responseBody, tokenPath);
                 if (token != null && !token.isBlank()) {
                     log.info("Dynamic authentication succeeded for {}. Extracted token of length {}", loginUrl, token.length());
                     return new AuthResult(true, token, null);
@@ -93,7 +92,7 @@ public class DynamicAuthService {
                     return new AuthResult(false, null, "Token not found at path '" + tokenPath + "' in login response");
                 }
             } else {
-                return new AuthResult(false, null, "Login endpoint returned HTTP " + response.statusCode());
+                return new AuthResult(false, null, "Login endpoint returned HTTP " + statusCode);
             }
 
         } catch (Exception e) {
