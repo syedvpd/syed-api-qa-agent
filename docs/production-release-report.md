@@ -14,11 +14,11 @@ This report documents the final adversarial engineering release audit of the **S
 
 | Metric | Result | Notes |
 | :--- | :--- | :--- |
-| **Total Backend Tests** | **60 / 60 PASSING** | 100% success rate across 15 JUnit 5 test suites. Total run time: ~55 seconds. |
-| **Security Regression Tests** | **35 / 35 PASSING** | HMAC tokens, token expiration, tampered signatures, spoofing prevention, SSRF IP pinning, AES-GCM encryption. |
+| **Total Backend Tests** | **78 / 78 PASSING** | 100% success rate across 17 JUnit 5 test suites. Total run time: ~39 seconds. |
+| **Security Regression Tests** | **38 / 38 PASSING** | HMAC tokens, token expiration, tampered signatures, spoofing prevention, SSRF IP pinning, AES-GCM encryption. |
 | **Frontend Production Build** | **PASS** | `next build` completed with exit code 0. All 10 routes compiled in `standalone` container output mode. |
 | **Docker Configuration** | **PASS** | Verified multi-stage Dockerfiles for backend (Temurin 21) and frontend (Node 22 standalone). Added missing `frontend/public/.gitkeep` and configured `NEXT_PUBLIC_API_URL` build args. |
-| **Database Migrations** | **PASS** | Flyway V1 through V8 executed cleanly in sequence without drift, syntax errors, or schema conflicts. |
+| **Database Migrations** | **PASS** | Flyway V1 through V10 executed cleanly in sequence without drift, syntax errors, or schema conflicts. |
 | **Zero-LLM Scan** | **PASS** | 0 references to OpenAI, Anthropic, Gemini, Ollama, LangChain, HuggingFace, external AI APIs, or AI keys. |
 | **Production Blockers** | **0** | No remaining code defects or security vulnerabilities identified. |
 
@@ -48,8 +48,8 @@ This report documents the final adversarial engineering release audit of the **S
 ### D. SSRF & Anti-DNS Rebinding (IP Pinning)
 - `SsrfProtectionGuard.resolveAndValidate()` resolves hostnames once and produces a `ValidatedTarget`.
 - Blocks loopback (`127.0.0.1`, `::1`), RFC 1918 private subnets, Carrier-Grade NAT (`100.64.0.0/10`), IPv4-mapped IPv6, IPv6 unique-local (`fc00::/7`), wildcard (`0.0.0.0`), and cloud metadata (`169.254.169.254`, `metadata.google.internal`, Alibaba `100.100.100.200`).
-- URLs containing userinfo (`http://user:pass@host`) are immediately rejected.
-- Outbound requests connect directly to the pinned IP address, while preserving the virtual `Host` header and TLS SNI/hostname verification. All redirects re-run full validation.
+- Outbound requests across `HttpExecutionEngine`, `OpenApiFetchService`, and `DynamicAuthService` connect directly to the pinned IP address via `PinnedConnectionManager` (with raw socket fallback for HTTP verbs like PATCH), while preserving the virtual `Host` header and TLS SNI/hostname verification. All redirects re-run full validation.
+- Real OpenAPI response schema validation enforced in `AssertionEngine`: walks response schemas for the actual HTTP status code, checks required properties, and validates property types with descriptive contract failure diagnostics.
 
 ### E. Production Safety Controls
 - Destructive HTTP `DELETE` requests are skipped by default in `PRODUCTION` mode with status `SKIPPED`.

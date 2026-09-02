@@ -68,7 +68,7 @@ This system contains **ZERO external AI or LLM dependencies**:
 │   │   └── security/                    # TokenSecurityService & AuthSecurityFilter
 │   └── src/main/resources/
 │       ├── application.yml              # Main application configuration
-│       └── db/migration/                # Flyway migrations V1 through V8
+│       └── db/migration/                # Flyway migrations V1 through V10
 ├── frontend/                            # Next.js 14 (App Router) + Tailwind CSS
 │   ├── src/app/
 │   │   ├── dashboard/                   # Global execution dashboard
@@ -128,7 +128,7 @@ docker compose up -d postgres
 ```
 
 ### Step 4: Run Backend
-Flyway will automatically execute database migrations V1 through V8 on startup:
+Flyway will automatically execute database migrations V1 through V10 on startup:
 ```bash
 cd backend
 mvn spring-boot:run
@@ -207,7 +207,7 @@ Execute the complete backend automated test suite (including all security regres
 cd backend
 mvn clean test
 ```
-*Current test suite: **60 / 60 tests passing**, 0 failures, 0 errors*.
+*Current test suite: **78 / 78 tests passing**, 0 failures, 0 errors, 0 skipped*.
 
 Compile and verify the Next.js frontend production bundle:
 ```bash
