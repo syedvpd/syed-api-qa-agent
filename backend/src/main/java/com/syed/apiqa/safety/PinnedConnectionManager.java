@@ -144,7 +144,8 @@ public class PinnedConnectionManager {
             SSLParameters params = sslSocket.getSSLParameters();
             params.setServerNames(Collections.singletonList(new SNIHostName(originalHost)));
             sslSocket.setSSLParameters(params);
-            sslSocket.startHandshake();
+            // Do NOT eagerly trigger startHandshake() here.
+            // HttpsURLConnection manages the handshake lifecycle when writing/reading streams.
             return sslSocket;
         }
     }

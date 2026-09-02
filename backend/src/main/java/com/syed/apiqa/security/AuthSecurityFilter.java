@@ -48,7 +48,7 @@ public class AuthSecurityFilter extends OncePerRequestFilter {
         }
         String path = request.getRequestURI();
         // Public endpoints that do not require authentication
-        return path.equals("/api/health") || path.startsWith("/api/auth/") || !path.startsWith("/api/");
+        return path.equals("/api/health") || path.equals("/health") || path.equals("/actuator/health") || path.equals("/") || path.startsWith("/api/auth/") || !path.startsWith("/api/");
     }
 
     @Override
