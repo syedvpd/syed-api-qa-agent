@@ -59,7 +59,6 @@ public class PinnedConnectionManager {
                 log.warn("Failed to set pinned SSLSocketFactory, falling back: {}", e.getMessage());
             }
 
-            conn.setRequestProperty("Host", target.originalHostHeader());
             return conn;
         } else {
             // Plain HTTP: Connect directly to pinned IP URL and send original Host header
@@ -97,9 +96,12 @@ public class PinnedConnectionManager {
 
         @Override
         public Socket createSocket() throws IOException {
-            Socket socket = new Socket();
-            socket.connect(new InetSocketAddress(pinnedAddress, port), 15000);
-            return wrapWithTls(socket);
+            return new Socket() {
+                @Override
+                public void connect(SocketAddress endpoint, int timeout) throws IOException {
+                    super.connect(new InetSocketAddress(pinnedAddress, port), timeout);
+                }
+            };
         }
 
         @Override
