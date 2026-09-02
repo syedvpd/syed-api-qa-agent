@@ -1,12 +1,11 @@
 package com.syed.apiqa.auth;
 
 import java.io.Serializable;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Dynamic Credential Profile representing an arbitrary user or machine identity.
- * Supports N dynamic roles without hardcoding (0, 1, 5, 29, 100).
+ * Supports N dynamic identities without hardcoding (0, 1, 5, 29, 100+).
  */
 public class CredentialProfile implements Serializable {
 
@@ -17,6 +16,8 @@ public class CredentialProfile implements Serializable {
         API_KEY,
         BASIC_AUTH,
         COOKIE,
+        OAUTH2_CLIENT_CREDENTIALS,
+        CUSTOM_HEADER,
         NO_AUTH
     }
 
@@ -26,9 +27,15 @@ public class CredentialProfile implements Serializable {
     private String usernameOrEmail;
     private String secretOrPassword;
     private String token; // Optional pre-generated token or API key
-    private String headerName; // For API_KEY or custom auth header
-    private Map<String, String> customHeaders = new HashMap<>();
-    private Map<String, String> customPayloadFields = new HashMap<>();
+    private String headerName; // For API_KEY or custom auth header (e.g. "X-API-Key")
+    private String queryParamName; // For query-based API keys
+    private String cookieName; // For cookie-based authentication
+    private String tenantId; // Optional multi-tenancy context
+    private String environment; // e.g. "STAGING", "PRODUCTION"
+    private List<String> scopes = new ArrayList<>();
+    private Map<String, String> customHeaders = new LinkedHashMap<>();
+    private Map<String, String> customPayloadFields = new LinkedHashMap<>();
+    private Map<String, Object> metadata = new LinkedHashMap<>();
 
     public CredentialProfile() {}
 
@@ -61,9 +68,27 @@ public class CredentialProfile implements Serializable {
     public String getHeaderName() { return headerName; }
     public void setHeaderName(String headerName) { this.headerName = headerName; }
 
+    public String getQueryParamName() { return queryParamName; }
+    public void setQueryParamName(String queryParamName) { this.queryParamName = queryParamName; }
+
+    public String getCookieName() { return cookieName; }
+    public void setCookieName(String cookieName) { this.cookieName = cookieName; }
+
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
+
+    public String getEnvironment() { return environment; }
+    public void setEnvironment(String environment) { this.environment = environment; }
+
+    public List<String> getScopes() { return scopes; }
+    public void setScopes(List<String> scopes) { this.scopes = scopes != null ? scopes : new ArrayList<>(); }
+
     public Map<String, String> getCustomHeaders() { return customHeaders; }
-    public void setCustomHeaders(Map<String, String> customHeaders) { this.customHeaders = customHeaders; }
+    public void setCustomHeaders(Map<String, String> customHeaders) { this.customHeaders = customHeaders != null ? customHeaders : new LinkedHashMap<>(); }
 
     public Map<String, String> getCustomPayloadFields() { return customPayloadFields; }
-    public void setCustomPayloadFields(Map<String, String> customPayloadFields) { this.customPayloadFields = customPayloadFields; }
+    public void setCustomPayloadFields(Map<String, String> customPayloadFields) { this.customPayloadFields = customPayloadFields != null ? customPayloadFields : new LinkedHashMap<>(); }
+
+    public Map<String, Object> getMetadata() { return metadata; }
+    public void setMetadata(Map<String, Object> metadata) { this.metadata = metadata != null ? metadata : new LinkedHashMap<>(); }
 }
