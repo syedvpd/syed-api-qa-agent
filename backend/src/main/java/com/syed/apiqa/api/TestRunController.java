@@ -36,6 +36,7 @@ public class TestRunController {
     private final com.syed.apiqa.persistence.RegressionFindingRepository regressionFindingRepository;
     private final com.syed.apiqa.persistence.RunAuditEventRepository auditEventRepository;
     private final com.syed.apiqa.persistence.EndpointCoverageRepository endpointCoverageRepository;
+    private final com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService;
 
     public TestRunController(TestRunRepository testRunRepository,
                              ApiEndpointRepository apiEndpointRepository,
@@ -53,7 +54,8 @@ public class TestRunController {
                              com.syed.apiqa.regression.HistoricalRegressionService regressionService,
                              com.syed.apiqa.persistence.RegressionFindingRepository regressionFindingRepository,
                              com.syed.apiqa.persistence.RunAuditEventRepository auditEventRepository,
-                             com.syed.apiqa.persistence.EndpointCoverageRepository endpointCoverageRepository) {
+                             com.syed.apiqa.persistence.EndpointCoverageRepository endpointCoverageRepository,
+                             com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService) {
         this.testRunRepository = testRunRepository;
         this.apiEndpointRepository = apiEndpointRepository;
         this.testCaseRepository = testCaseRepository;
@@ -71,6 +73,7 @@ public class TestRunController {
         this.regressionFindingRepository = regressionFindingRepository;
         this.auditEventRepository = auditEventRepository;
         this.endpointCoverageRepository = endpointCoverageRepository;
+        this.preflightService = preflightService;
     }
 
     @GetMapping
@@ -162,6 +165,30 @@ public class TestRunController {
                 "environmentType", run.getEnvironmentType().name(),
                 "message", "Autonomous test run initiated in background"
         ));
+    }
+
+    @PostMapping("/preflight")
+    public ResponseEntity<?> testPreflight(@RequestBody Map<String, Object> request) {
+        String openapiUrl = (String) request.get("openapiUrl");
+        String baseUrl = openapiUrl;
+        if (baseUrl != null && baseUrl.contains("/v3/") || (baseUrl != null && baseUrl.contains("/swagger"))) {
+            int idx = baseUrl.indexOf("/", 8);
+            if (idx > 0) baseUrl = baseUrl.substring(0, idx);
+        }
+
+        List<com.syed.apiqa.auth.CredentialProfile> profiles = new ArrayList<>();
+        if (request.containsKey("profiles") && request.get("profiles") instanceof List<?> list) {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            for (Object obj : list) {
+                try {
+                    com.syed.apiqa.auth.CredentialProfile cp = mapper.convertValue(obj, com.syed.apiqa.auth.CredentialProfile.class);
+                    if (cp != null) profiles.add(cp);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        var report = preflightService.executePreflight("preflight_" + UUID.randomUUID(), profiles, baseUrl);
+        return ResponseEntity.ok(report);
     }
 
     @PostMapping("/{id}/cancel")
