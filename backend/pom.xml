@@ -85,11 +85,11 @@
             <version>2.0.3</version>
         </dependency>
 
-        <!-- In-memory H2 for lightweight unit tests -->
+        <!-- In-memory H2 for lightweight local dev and testing -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Testing -->

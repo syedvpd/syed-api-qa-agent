@@ -22,9 +22,6 @@ public class AuthenticationStrategyRegistry {
                 }
             }
         }
-        return strategies.stream()
-                .filter(s -> s.supports(CredentialProfile.AuthStrategy.BEARER_TOKEN))
-                .findFirst()
-                .orElseGet(() -> strategies.isEmpty() ? null : strategies.get(0));
+        throw new IllegalArgumentException("AUTH_CONFIGURATION_REQUIRED: No authentication strategy handler registered for strategy [" + strategy + "]");
     }
 }

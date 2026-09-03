@@ -114,15 +114,40 @@ public class HttpExecutionEngine {
                                             String authCredentials,
                                             IdentitySession identitySession) {
 
+        // 0. Identity Authentication Status Check: Prevent cascade of fake API failures
+        if (identitySession != null && identitySession.getState() == com.syed.apiqa.auth.canonical.AuthLifecycleState.AUTH_FAILED) {
+            step.setStatus(StepStatus.BLOCKED);
+            String reason = "BLOCKED_BY_AUTHENTICATION: Identity [" + identitySession.getIdentityName() + "] failed authentication: " 
+                    + (identitySession.getLastErrorMessage() != null ? identitySession.getLastErrorMessage() : "credentials rejected");
+            step.setFailureReason(reason);
+            return new StepExecutionOutcome(StepStatus.BLOCKED, null, Collections.emptyList(), reason);
+        }
+
         // 1. Resolve Variables in Path & URL
         ExecutionContext.ResolutionResult urlResolution = context.resolve(step.getPathTemplate());
         if (!urlResolution.isFullyResolved()) {
-            step.setStatus(StepStatus.BLOCKED);
-            step.setFailureReason("Missing required context variable: {{" + urlResolution.getMissingVariable() + "}}");
-            return new StepExecutionOutcome(StepStatus.BLOCKED, null, Collections.emptyList(), step.getFailureReason());
+            step.setStatus(StepStatus.REQUEST_NOT_EXECUTABLE);
+            step.setFailureReason("REQUEST_NOT_EXECUTABLE: Missing required context variable or path parameter: {" + urlResolution.getMissingVariable() + "}");
+            return new StepExecutionOutcome(StepStatus.REQUEST_NOT_EXECUTABLE, null, Collections.emptyList(), step.getFailureReason());
         }
 
         String relativePath = urlResolution.getResolvedContent();
+
+        // 1.1 Pre-Request Local Contract Gate: Catch raw unresolved path parameters (e.g. {id}, {slug})
+        if (relativePath != null && relativePath.matches(".*\\{[^}]+\\}.*")) {
+            step.setStatus(StepStatus.REQUEST_NOT_EXECUTABLE);
+            String reason = "REQUEST_NOT_EXECUTABLE: Path contains unresolved parameter in: " + relativePath + ". Upstream dependency was not satisfied.";
+            step.setFailureReason(reason);
+            return new StepExecutionOutcome(StepStatus.REQUEST_NOT_EXECUTABLE, null, Collections.emptyList(), reason);
+        }
+
+        if (step.getMethod() == null || step.getMethod().isBlank()) {
+            step.setStatus(StepStatus.REQUEST_NOT_EXECUTABLE);
+            String reason = "REQUEST_NOT_EXECUTABLE: Missing HTTP method specification.";
+            step.setFailureReason(reason);
+            return new StepExecutionOutcome(StepStatus.REQUEST_NOT_EXECUTABLE, null, Collections.emptyList(), reason);
+        }
+
         String fullUrl = baseUrl + (relativePath.startsWith("/") ? relativePath : "/" + relativePath);
         step.setResolvedUrl(fullUrl);
 

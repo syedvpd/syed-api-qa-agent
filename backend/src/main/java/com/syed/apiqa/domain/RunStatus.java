@@ -2,6 +2,7 @@ package com.syed.apiqa.domain;
 
 public enum RunStatus {
     CREATED,
+    QUEUED,
     DISCOVERING,
     FETCHING_SPEC,
     PARSING_SPEC,

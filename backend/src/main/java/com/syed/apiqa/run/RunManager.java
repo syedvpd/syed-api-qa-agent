@@ -62,6 +62,7 @@ public class RunManager {
     private final com.syed.apiqa.auth.engine.IdentitySessionManager identitySessionManager;
     private final com.syed.apiqa.auth.matrix.AuthorizationMatrixEngine authorizationMatrixEngine;
     private final com.syed.apiqa.discovery.ContractNormalizationService normalizationService;
+    private final com.syed.apiqa.intelligence.FailureIntelligenceService failureIntelligenceService;
 
     // Concurrency limiter: dynamically configured via syed.safety.max-concurrency
     private final int maxConcurrency;
@@ -97,7 +98,8 @@ public class RunManager {
                       com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService,
                       com.syed.apiqa.auth.engine.IdentitySessionManager identitySessionManager,
                       com.syed.apiqa.auth.matrix.AuthorizationMatrixEngine authorizationMatrixEngine,
-                      com.syed.apiqa.discovery.ContractNormalizationService normalizationService) {
+                      com.syed.apiqa.discovery.ContractNormalizationService normalizationService,
+                      com.syed.apiqa.intelligence.FailureIntelligenceService failureIntelligenceService) {
         this.fetchService = fetchService;
         this.parserService = parserService;
         this.dependencyEngine = dependencyEngine;
@@ -126,6 +128,7 @@ public class RunManager {
         this.identitySessionManager = identitySessionManager;
         this.authorizationMatrixEngine = authorizationMatrixEngine;
         this.normalizationService = normalizationService;
+        this.failureIntelligenceService = failureIntelligenceService;
     }
 
     /**
@@ -236,23 +239,35 @@ public class RunManager {
             return;
         }
 
-        // 6.5 Bounded Concurrency Check
-        boolean permitAcquired = false;
-        try {
-            permitAcquired = concurrencyLimiter.tryAcquire(2, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
+        // 6.5 Bounded Concurrency & Queueing with Backpressure
+        boolean permitAcquired = concurrencyLimiter.tryAcquire();
         if (!permitAcquired) {
-            log.warn("Concurrency limit reached (Max {} concurrent runs). Rejecting run {}.", maxConcurrency, testRunId);
-            run.setStatus(RunStatus.FAILED);
-            run.setErrorMessage("CONCURRENCY_LIMIT_EXCEEDED (Max " + maxConcurrency + " concurrent runs)");
-            run.setCompletedAt(OffsetDateTime.now());
+            log.info("Max active concurrency ({}) reached. Transitioning TestRun {} to QUEUED state.", maxConcurrency, testRunId);
+            run.setStatus(RunStatus.QUEUED);
             testRunRepository.save(run);
-            sseEventService.publishEvent(run.getId(), "RUN_FAILED", Map.of("error", run.getErrorMessage()));
-            recordAudit(run, "FAILED", "SYSTEM", run.getErrorMessage());
-            return;
+            sseEventService.publishEvent(run.getId(), "RUN_QUEUED", Map.of(
+                    "status", "QUEUED",
+                    "message", "Run queued. Waiting for an execution worker slot."
+            ));
+            recordAudit(run, "QUEUED", "SYSTEM", "Concurrency limit reached. Placed in execution queue with backpressure.");
+
+            int queueTimeoutSeconds = 300; // 5 minutes queue timeout
+            try {
+                permitAcquired = concurrencyLimiter.tryAcquire(queueTimeoutSeconds, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            if (!permitAcquired) {
+                log.warn("Queue wait timeout exceeded ({}s) for run {}.", queueTimeoutSeconds, testRunId);
+                run.setStatus(RunStatus.TIMED_OUT);
+                run.setErrorMessage("QUEUE_TIMEOUT: Exceeded queue wait limit of " + queueTimeoutSeconds + "s.");
+                run.setCompletedAt(OffsetDateTime.now());
+                testRunRepository.save(run);
+                sseEventService.publishEvent(run.getId(), "RUN_TIMED_OUT", Map.of("error", run.getErrorMessage()));
+                recordAudit(run, "TIMED_OUT", "SYSTEM", run.getErrorMessage());
+                return;
+            }
         }
 
         long startNanos = System.nanoTime();
@@ -670,28 +685,53 @@ public class RunManager {
                         "failed", failedCounter.get(),
                         "blocked", blockedCounter.get()
                 ));
-            } else if (outcome.getFinalStatus() == StepStatus.BLOCKED) {
+            } else if (outcome.getFinalStatus() == StepStatus.BLOCKED || outcome.getFinalStatus() == StepStatus.REQUEST_NOT_EXECUTABLE) {
                 int b = blockedCounter.incrementAndGet();
-                sseEventService.publishEvent(run.getId(), "TEST_BLOCKED", Map.of(
-                        "stepId", step.getId(),
-                        "name", step.getName(),
-                        "reason", step.getFailureReason() != null ? step.getFailureReason() : "Blocked",
-                        "passed", passedCounter.get(),
-                        "failed", failedCounter.get(),
-                        "blocked", b
-                ));
+                com.syed.apiqa.intelligence.DiagnosticFinding finding = failureIntelligenceService.diagnoseStep(step, outcome.getExecution());
+                String formattedReason = String.format("[%s | %s | Confidence: %s] %s",
+                        finding.getCategory(),
+                        finding.getAttribution(),
+                        finding.getConfidence(),
+                        finding.getProbableRootCause());
+                step.setFailureReason(formattedReason);
+
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("stepId", step.getId());
+                payload.put("name", step.getName());
+                payload.put("status", outcome.getFinalStatus().name());
+                payload.put("category", finding.getCategory().name());
+                payload.put("attribution", finding.getAttribution().name());
+                payload.put("confidence", finding.getConfidence().name());
+                payload.put("reason", formattedReason);
+                payload.put("blastRadius", finding.getBlastRadius());
+                payload.put("passed", passedCounter.get());
+                payload.put("failed", failedCounter.get());
+                payload.put("blocked", b);
+                sseEventService.publishEvent(run.getId(), "TEST_BLOCKED", payload);
             } else {
                 caseFailed = true;
                 int f = failedCounter.incrementAndGet();
-                sseEventService.publishEvent(run.getId(), "TEST_FAILED", Map.of(
-                        "stepId", step.getId(),
-                        "name", step.getName(),
-                        "status", outcome.getFinalStatus().name(),
-                        "reason", step.getFailureReason() != null ? step.getFailureReason() : "Failed",
-                        "passed", passedCounter.get(),
-                        "failed", f,
-                        "blocked", blockedCounter.get()
-                ));
+                com.syed.apiqa.intelligence.DiagnosticFinding finding = failureIntelligenceService.diagnoseStep(step, outcome.getExecution());
+                String formattedReason = String.format("[%s | %s | Confidence: %s] %s",
+                        finding.getCategory(),
+                        finding.getAttribution(),
+                        finding.getConfidence(),
+                        finding.getProbableRootCause());
+                step.setFailureReason(formattedReason);
+
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("stepId", step.getId());
+                payload.put("name", step.getName());
+                payload.put("status", outcome.getFinalStatus().name());
+                payload.put("category", finding.getCategory().name());
+                payload.put("attribution", finding.getAttribution().name());
+                payload.put("confidence", finding.getConfidence().name());
+                payload.put("reason", formattedReason);
+                payload.put("blastRadius", finding.getBlastRadius());
+                payload.put("passed", passedCounter.get());
+                payload.put("failed", f);
+                payload.put("blocked", blockedCounter.get());
+                sseEventService.publishEvent(run.getId(), "TEST_FAILED", payload);
                 List<TestStep> remaining = steps.subList(i + 1, steps.size());
                 failureIsolationHandler.isolateFailureAndBlockDownstream(step, remaining, tc.getScenarioType());
             }
