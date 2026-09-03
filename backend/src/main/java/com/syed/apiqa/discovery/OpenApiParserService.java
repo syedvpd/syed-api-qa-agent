@@ -153,7 +153,7 @@ public class OpenApiParserService {
         }
 
         // Security requirements
-        if (operation.getSecurity() != null && !operation.getSecurity().isEmpty()) {
+        if (operation.getSecurity() != null) {
             try {
                 endpoint.setSecurityRequirements(objectMapper.writeValueAsString(operation.getSecurity()));
             } catch (Exception ignored) {}

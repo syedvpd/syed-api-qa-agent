@@ -63,6 +63,7 @@ public class RunManager {
     private final com.syed.apiqa.auth.matrix.AuthorizationMatrixEngine authorizationMatrixEngine;
     private final com.syed.apiqa.discovery.ContractNormalizationService normalizationService;
     private final com.syed.apiqa.intelligence.FailureIntelligenceService failureIntelligenceService;
+    private final com.syed.apiqa.auth.engine.SecurityDecisionEngine securityDecisionEngine;
 
     // Concurrency limiter: dynamically configured via syed.safety.max-concurrency
     private final int maxConcurrency;
@@ -99,7 +100,8 @@ public class RunManager {
                       com.syed.apiqa.auth.engine.IdentitySessionManager identitySessionManager,
                       com.syed.apiqa.auth.matrix.AuthorizationMatrixEngine authorizationMatrixEngine,
                       com.syed.apiqa.discovery.ContractNormalizationService normalizationService,
-                      com.syed.apiqa.intelligence.FailureIntelligenceService failureIntelligenceService) {
+                      com.syed.apiqa.intelligence.FailureIntelligenceService failureIntelligenceService,
+                      com.syed.apiqa.auth.engine.SecurityDecisionEngine securityDecisionEngine) {
         this.fetchService = fetchService;
         this.parserService = parserService;
         this.dependencyEngine = dependencyEngine;
@@ -129,6 +131,7 @@ public class RunManager {
         this.authorizationMatrixEngine = authorizationMatrixEngine;
         this.normalizationService = normalizationService;
         this.failureIntelligenceService = failureIntelligenceService;
+        this.securityDecisionEngine = securityDecisionEngine;
     }
 
     /**
@@ -415,11 +418,12 @@ public class RunManager {
 
             final String fAuthType = authType;
             final String fAuthCreds = authCredentials;
+            final List<com.syed.apiqa.auth.CredentialProfile> fActiveProfiles = activeProfiles;
 
             // 1. Execute Level 1 (CRUD workflows) sequentially to establish resource state & capture IDs
             for (TestCase tc : crudCases) {
                 if (isCancelled(testRunId)) break;
-                executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery);
+                executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery, fActiveProfiles);
                 run.setPassedTests(passedCounter.get());
                 run.setFailedTests(failedCounter.get());
                 run.setBlockedTests(blockedCounter.get());
@@ -433,7 +437,7 @@ public class RunManager {
                 for (TestCase tc : independentCases) {
                     pool.submit(() -> {
                         if (!isCancelled(testRunId)) {
-                            executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery);
+                            executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery, fActiveProfiles);
                         }
                     });
                 }
@@ -586,7 +590,8 @@ public class RunManager {
                                  AtomicInteger passedCounter,
                                  AtomicInteger failedCounter,
                                  AtomicInteger blockedCounter,
-                                 OpenApiParserService.DiscoveryResult discovery) {
+                                 OpenApiParserService.DiscoveryResult discovery,
+                                 List<com.syed.apiqa.auth.CredentialProfile> activeProfiles) {
         List<TestStep> steps = testStepRepository.findByTestCaseIdOrderByStepOrderAsc(tc.getId());
         boolean caseFailed = false;
 
@@ -618,9 +623,44 @@ public class RunManager {
                     "method", step.getMethod()
             ));
 
+            com.syed.apiqa.auth.engine.OperationSecurityDecision decision = securityDecisionEngine.evaluateSecurity(
+                    step.getApiEndpoint(), discovery.getOpenAPI(), activeProfiles);
+
             com.syed.apiqa.auth.IdentitySession idSession = null;
-            if (context.getAllSessions() != null && !context.getAllSessions().isEmpty()) {
-                idSession = context.getAllSessions().values().iterator().next();
+            if (decision.getSelectedIdentity() != null && context.getAllSessions() != null) {
+                idSession = context.getSession(decision.getSelectedIdentity().getId());
+            }
+
+            if (decision.getSecurityState() == com.syed.apiqa.auth.engine.OperationSecurityDecision.SecurityState.AUTH_REQUIRED) {
+                if (decision.getSelectedIdentity() == null || idSession == null || idSession.getState() == com.syed.apiqa.auth.canonical.AuthLifecycleState.AUTH_FAILED) {
+                    step.setStatus(StepStatus.BLOCKED);
+                    String reason;
+                    if (decision.getSelectedIdentity() == null) {
+                        reason = "BLOCKED_BY_AUTHENTICATION: " + decision.getReason();
+                    } else if (idSession == null) {
+                        reason = "BLOCKED_BY_AUTHENTICATION: Selected identity [" + decision.getSelectedIdentity().getName() + "] has no active session registered.";
+                    } else {
+                        reason = "BLOCKED_BY_AUTHENTICATION: Identity [" + idSession.getIdentityName() + "] failed authentication: "
+                                + (idSession.getLastErrorMessage() != null ? idSession.getLastErrorMessage() : "credentials rejected");
+                    }
+                    step.setFailureReason(reason);
+                    testStepRepository.save(step);
+                    caseFailed = true;
+                    int b = blockedCounter.incrementAndGet();
+                    sseEventService.publishEvent(run.getId(), "TEST_BLOCKED", Map.of(
+                            "stepId", step.getId(),
+                            "name", step.getName(),
+                            "reason", step.getFailureReason(),
+                            "passed", passedCounter.get(),
+                            "failed", failedCounter.get(),
+                            "blocked", b
+                    ));
+                    continue;
+                }
+            } else if (decision.getSecurityState() == com.syed.apiqa.auth.engine.OperationSecurityDecision.SecurityState.NO_SECURITY 
+                       || decision.getSecurityState() == com.syed.apiqa.auth.engine.OperationSecurityDecision.SecurityState.AUTH_BOOTSTRAP) {
+                // Do not pass the failed identity session for public or bootstrap endpoints
+                idSession = null;
             }
 
             HttpExecutionEngine.StepExecutionOutcome outcome = httpEngine.executeStep(

@@ -68,6 +68,10 @@ public class ExecutionContext {
         return testRunId;
     }
 
+    public String getRunId() {
+        return testRunId;
+    }
+
     public void setVariable(String name, String value) {
         setVariable(name, value, VariableScope.RUN, null);
     }

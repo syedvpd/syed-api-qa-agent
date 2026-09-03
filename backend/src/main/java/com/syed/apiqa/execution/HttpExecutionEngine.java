@@ -8,10 +8,12 @@ import com.syed.apiqa.domain.*;
 import com.syed.apiqa.persistence.AssertionResultRepository;
 import com.syed.apiqa.persistence.CapturedVariableRepository;
 import com.syed.apiqa.persistence.ExecutionRepository;
+import com.syed.apiqa.persistence.TestRunRepository;
 import com.syed.apiqa.safety.SecretMasker;
 import com.syed.apiqa.safety.SsrfProtectionGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -53,6 +55,7 @@ public class HttpExecutionEngine {
     private final ExecutionRepository executionRepository;
     private final AssertionResultRepository assertionResultRepository;
     private final CapturedVariableRepository capturedVariableRepository;
+    private final com.syed.apiqa.persistence.TestRunRepository testRunRepository;
     private final ObjectMapper objectMapper;
 
     @Value("${syed.safety.default-timeout-seconds:15}")
@@ -61,12 +64,14 @@ public class HttpExecutionEngine {
     @Value("${syed.safety.max-response-size-bytes:2097152}")
     private int maxResponseSizeBytes;
 
+    @Autowired
     public HttpExecutionEngine(SsrfProtectionGuard ssrfGuard,
                                SecretMasker secretMasker,
                                AssertionEngine assertionEngine,
                                ExecutionRepository executionRepository,
                                AssertionResultRepository assertionResultRepository,
                                CapturedVariableRepository capturedVariableRepository,
+                               com.syed.apiqa.persistence.TestRunRepository testRunRepository,
                                ObjectMapper objectMapper) {
         this.ssrfGuard = ssrfGuard;
         this.secretMasker = secretMasker;
@@ -74,7 +79,18 @@ public class HttpExecutionEngine {
         this.executionRepository = executionRepository;
         this.assertionResultRepository = assertionResultRepository;
         this.capturedVariableRepository = capturedVariableRepository;
+        this.testRunRepository = testRunRepository;
         this.objectMapper = objectMapper;
+    }
+
+    public HttpExecutionEngine(SsrfProtectionGuard ssrfGuard,
+                               SecretMasker secretMasker,
+                               AssertionEngine assertionEngine,
+                               ExecutionRepository executionRepository,
+                               AssertionResultRepository assertionResultRepository,
+                               CapturedVariableRepository capturedVariableRepository,
+                               ObjectMapper objectMapper) {
+        this(ssrfGuard, secretMasker, assertionEngine, executionRepository, assertionResultRepository, capturedVariableRepository, null, objectMapper);
     }
 
     public static class StepExecutionOutcome {
@@ -113,15 +129,6 @@ public class HttpExecutionEngine {
                                             String authType,
                                             String authCredentials,
                                             IdentitySession identitySession) {
-
-        // 0. Identity Authentication Status Check: Prevent cascade of fake API failures
-        if (identitySession != null && identitySession.getState() == com.syed.apiqa.auth.canonical.AuthLifecycleState.AUTH_FAILED) {
-            step.setStatus(StepStatus.BLOCKED);
-            String reason = "BLOCKED_BY_AUTHENTICATION: Identity [" + identitySession.getIdentityName() + "] failed authentication: " 
-                    + (identitySession.getLastErrorMessage() != null ? identitySession.getLastErrorMessage() : "credentials rejected");
-            step.setFailureReason(reason);
-            return new StepExecutionOutcome(StepStatus.BLOCKED, null, Collections.emptyList(), reason);
-        }
 
         // 1. Resolve Variables in Path & URL
         ExecutionContext.ResolutionResult urlResolution = context.resolve(step.getPathTemplate());
@@ -364,19 +371,20 @@ public class HttpExecutionEngine {
                     context.setVariable(entity + ".etag", etagHeader);
                 }
 
-                // Extract Variables from successful response payload
-                if (finalStatus == StepStatus.PASSED && !rawBody.isBlank()) {
-                    extractAndStoreVariables(rawBody, step, context, execution);
-                }
-
-                // Persist execution evidence and assertion results
-                executionRepository.save(execution);
+                // 1. Persist execution evidence first to satisfy foreign key constraints
+                Execution savedExecution = executionRepository.save(execution);
+                Execution effectiveExecution = savedExecution != null ? savedExecution : execution;
                 for (AssertionResult ar : assertions) {
                     assertionResultRepository.save(ar);
                 }
 
+                // 2. Extract and persist Variables from successful response payload referencing persisted execution
+                if (finalStatus == StepStatus.PASSED && !rawBody.isBlank()) {
+                    extractAndStoreVariables(rawBody, step, context, effectiveExecution);
+                }
+
                 step.setStatus(finalStatus);
-                return new StepExecutionOutcome(finalStatus, execution, assertions, null);
+                return new StepExecutionOutcome(finalStatus, effectiveExecution, assertions, null);
 
             } catch (SocketTimeoutException e) {
                 long latencyMs = Math.max(1, (System.nanoTime() - startNanos) / 1_000_000);
@@ -509,26 +517,50 @@ public class HttpExecutionEngine {
                             context.setVariable(entity + "_id", valueStr);
                         }
 
-                        // Persist to database
+                        TestRun run = null;
+                        if (context != null && context.getRunId() != null && testRunRepository != null) {
+                            run = testRunRepository.findById(context.getRunId()).orElse(null);
+                        }
+                        if (run == null && step.getTestCase() != null) {
+                            try {
+                                run = step.getTestCase().getTestRun();
+                            } catch (Exception ignored) {}
+                        }
+
+                        // Persist scoped variable to database
                         CapturedVariable cv = new CapturedVariable();
                         cv.setId(UUID.randomUUID().toString());
-                        cv.setTestRun(step.getTestCase().getTestRun());
+                        cv.setTestRun(run);
                         cv.setExecution(execution);
                         cv.setVariableName(scopedName);
                         cv.setVariableValue(valueStr);
                         capturedVariableRepository.save(cv);
+
+                        // Also persist alias variable (e.g. "id") if distinct
+                        if ("id".equalsIgnoreCase(key) || "uuid".equalsIgnoreCase(key)) {
+                            CapturedVariable cvAlias = new CapturedVariable();
+                            cvAlias.setId(UUID.randomUUID().toString());
+                            cvAlias.setTestRun(run);
+                            cvAlias.setExecution(execution);
+                            cvAlias.setVariableName(key);
+                            cvAlias.setVariableValue(valueStr);
+                            capturedVariableRepository.save(cvAlias);
+                        }
                     }
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("Failed to extract or persist variables for step {}: {}", step.getName(), e.getMessage());
+        }
     }
 
     private String extractEntityPrefix(String path) {
-        if (path == null) return "entity";
+        if (path == null || path.isBlank()) return "entity";
         String[] parts = path.split("/");
-        for (String p : parts) {
+        for (int i = parts.length - 1; i >= 0; i--) {
+            String p = parts[i].trim();
             if (!p.isBlank() && !p.startsWith("{") && !p.equalsIgnoreCase("api") &&
-                    !p.equalsIgnoreCase("v1") && !p.equalsIgnoreCase("v2")) {
+                    !p.equalsIgnoreCase("v1") && !p.equalsIgnoreCase("v2") && !p.equalsIgnoreCase("v3")) {
                 return p.toLowerCase();
             }
         }
@@ -632,19 +664,19 @@ public class HttpExecutionEngine {
                     req.append("Authorization: Bearer ").append(identitySession.getAccessToken().trim()).append("\r\n");
                 }
                 if (identitySession.getAuthHeaders() != null) {
-                    identitySession.getAuthHeaders().forEach((k, v) -> req.append(k).append(": ").append(v).append("\r\n"));
-                }
-                if (identitySession.getCookieHeader() != null && !identitySession.getCookieHeader().isBlank()) {
-                    req.append("Cookie: ").append(identitySession.getCookieHeader()).append("\r\n");
-                }
-            } else if (authType != null && authCredentials != null && !authCredentials.isBlank() && !"NONE".equalsIgnoreCase(authType)) {
-                switch (authType.toUpperCase()) {
-                    case "BEARER":
-                    case "BEARER_TOKEN":
-                        req.append("Authorization: Bearer ").append(authCredentials.trim()).append("\r\n");
-                        break;
-                    case "API_KEY":
-                        if (authCredentials.contains(":")) {
+                        identitySession.getAuthHeaders().forEach((k, v) -> req.append(k).append(": ").append(v).append("\r\n"));
+                    }
+                    if (identitySession.getCookieHeader() != null && !identitySession.getCookieHeader().isBlank()) {
+                        req.append("Cookie: ").append(identitySession.getCookieHeader()).append("\r\n");
+                    }
+                } else if (authType != null && authCredentials != null && !authCredentials.isBlank() && !"NONE".equalsIgnoreCase(authType)) {
+                    switch (authType.toUpperCase()) {
+                        case "BEARER":
+                        case "BEARER_TOKEN":
+                            req.append("Authorization: Bearer ").append(authCredentials.trim()).append("\r\n");
+                            break;
+                        case "API_KEY":
+                            if (authCredentials.contains(":")) {
                             String[] p = authCredentials.split(":", 2);
                             req.append(p[0].trim()).append(": ").append(p[1].trim()).append("\r\n");
                         } else {
