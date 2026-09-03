@@ -385,12 +385,28 @@ export default function LiveRunPage({ params }: { params: { id: string } }) {
           </div>
           <div className="flex items-center space-x-4">
             <div>
-              <span className="text-slate-500">PROGRESS: </span>
-              <span className="text-slate-200 font-bold">{progressPct}%</span>
+              <span className="text-slate-500">DISCOVERED: </span>
+              <span className="text-sky-300 font-bold">{totalApis} routes</span>
             </div>
             <div>
-              <span className="text-slate-500">TOTAL: </span>
-              <span className="text-slate-200 font-bold">{totalTests}</span>
+              <span className="text-slate-500">
+                {status === "DISCOVERING"
+                  ? "MAPPING CONTRACT"
+                  : status === "PLANNING"
+                  ? "BUILDING DAG"
+                  : status === "COMPLETED"
+                  ? "COMPLETE"
+                  : "PROGRESS:"}{" "}
+              </span>
+              <span className="text-slate-200 font-bold">
+                {status === "DISCOVERING"
+                  ? `${totalApis} operations`
+                  : status === "PLANNING"
+                  ? "Formulating Plan"
+                  : totalTests > 0
+                  ? `${progressPct}% (${executedCount}/${totalTests})`
+                  : `${status}`}
+              </span>
             </div>
           </div>
         </div>
@@ -398,8 +414,16 @@ export default function LiveRunPage({ params }: { params: { id: string } }) {
         {/* Real-time Progress Bar */}
         <div className="w-full bg-[#161b22] h-1 overflow-hidden">
           <div
-            className="bg-gradient-to-r from-indigo-500 via-emerald-400 to-teal-300 h-1 transition-all duration-300"
-            style={{ width: `${progressPct}%` }}
+            className={`h-1 transition-all duration-300 ${
+              status === "DISCOVERING" || status === "PLANNING"
+                ? "bg-gradient-to-r from-sky-500 via-indigo-400 to-purple-500 w-full animate-pulse"
+                : "bg-gradient-to-r from-indigo-500 via-emerald-400 to-teal-300"
+            }`}
+            style={
+              status === "DISCOVERING" || status === "PLANNING"
+                ? { width: "100%" }
+                : { width: `${progressPct}%` }
+            }
           />
         </div>
 
