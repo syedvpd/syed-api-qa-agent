@@ -92,10 +92,9 @@ public class Phase6RunControlAndSchedulingTest {
         String specUrl = baseUrl + "/v3/api-docs";
         String idempotencyKey = "idemp-key-" + UUID.randomUUID();
 
-        Map<String, String> request = Map.of(
-                "openapiUrl", specUrl,
-                "environmentType", "STAGING"
-        );
+        com.syed.apiqa.api.dto.CreateRunRequest request = new com.syed.apiqa.api.dto.CreateRunRequest();
+        request.setOpenapiUrl(specUrl);
+        request.setEnvironmentType("STAGING");
 
         // 1. First submission
         ResponseEntity<?> res1 = testRunController.createAndLaunchRun(request, idempotencyKey, "user_ops", null);

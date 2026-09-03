@@ -104,7 +104,7 @@ public class TestRunController {
 
     @PostMapping
     public ResponseEntity<?> createAndLaunchRun(
-            @RequestBody Map<String, String> request,
+            @RequestBody com.syed.apiqa.api.dto.CreateRunRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             java.security.Principal principal) {
@@ -117,12 +117,12 @@ public class TestRunController {
             }
         }
 
-        String openapiUrl = request.get("openapiUrl");
-        String envTypeStr = request.getOrDefault("environmentType", request.getOrDefault("environment", "STAGING"));
-        String authType = request.getOrDefault("authType", "NONE");
-        String authCredentials = request.get("authCredentials");
+        String openapiUrl = request.getOpenapiUrl();
+        String envTypeStr = request.getEnvironmentType();
+        String authType = request.getAuthType() != null ? request.getAuthType() : "NONE";
+        String authCredentials = request.getAuthCredentials();
         if (authCredentials == null || authCredentials.isBlank()) {
-            authCredentials = request.get("authToken");
+            authCredentials = request.getAuthToken();
         }
 
         if (openapiUrl == null || openapiUrl.isBlank()) {
@@ -150,14 +150,25 @@ public class TestRunController {
         TestRun run = new TestRun(UUID.randomUUID().toString(), openapiUrl, environmentType);
         run.setOwnerId(requesterId);
         run.setIdempotencyKey(idempotencyKey);
-        run.setAuthLoginUrl(request.get("authLoginUrl"));
-        run.setAuthLoginPayload(request.get("authLoginPayload"));
-        run.setAuthTokenPath(request.get("authTokenPath"));
-        run.setAuthRefreshUrl(request.get("authRefreshUrl"));
+        run.setAuthLoginUrl(request.getAuthLoginUrl());
+        run.setAuthLoginPayload(request.getAuthLoginPayload());
+        run.setAuthTokenPath(request.getAuthTokenPath());
+        run.setAuthRefreshUrl(request.getAuthRefreshUrl());
+        if (request.getTimeoutSeconds() != null) {
+            run.setTimeoutSeconds(request.getTimeoutSeconds());
+        }
+
+        if (request.getProfiles() != null && !request.getProfiles().isEmpty()) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                run.setCredentialProfilesJson(mapper.writeValueAsString(request.getProfiles()));
+            } catch (Exception ignored) {}
+        }
+
         testRunRepository.save(run);
 
-        // Trigger autonomous background execution
-        runManager.executeRunAsync(run.getId(), authType, authCredentials);
+        // Trigger autonomous background execution with typed profiles
+        runManager.executeRunAsync(run.getId(), authType, authCredentials, request.getProfiles());
 
         return ResponseEntity.status(201).body(Map.of(
                 "runId", run.getId(),

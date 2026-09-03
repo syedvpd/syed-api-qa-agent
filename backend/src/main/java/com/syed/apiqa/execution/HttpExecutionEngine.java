@@ -3,6 +3,7 @@ package com.syed.apiqa.execution;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.syed.apiqa.assertion.AssertionEngine;
+import com.syed.apiqa.auth.IdentitySession;
 import com.syed.apiqa.domain.*;
 import com.syed.apiqa.persistence.AssertionResultRepository;
 import com.syed.apiqa.persistence.CapturedVariableRepository;
@@ -102,6 +103,16 @@ public class HttpExecutionEngine {
                                             EnvironmentType envType,
                                             String authType,
                                             String authCredentials) {
+        return executeStep(step, baseUrl, context, envType, authType, authCredentials, null);
+    }
+
+    public StepExecutionOutcome executeStep(TestStep step,
+                                            String baseUrl,
+                                            ExecutionContext context,
+                                            EnvironmentType envType,
+                                            String authType,
+                                            String authCredentials,
+                                            IdentitySession identitySession) {
 
         // 1. Resolve Variables in Path & URL
         ExecutionContext.ResolutionResult urlResolution = context.resolve(step.getPathTemplate());
@@ -141,7 +152,7 @@ public class HttpExecutionEngine {
         }
 
         // 5. Execute HTTP Request with Retry & Timeout Safety
-        return dispatchWithSafety(step, fullUrl, validatedTarget, requestBody, context, authType, authCredentials);
+        return dispatchWithSafety(step, fullUrl, validatedTarget, requestBody, context, authType, authCredentials, identitySession);
     }
 
     private StepExecutionOutcome dispatchWithSafety(TestStep step,
@@ -150,7 +161,8 @@ public class HttpExecutionEngine {
                                                     String requestBody,
                                                     ExecutionContext context,
                                                     String authType,
-                                                    String authCredentials) {
+                                                    String authCredentials,
+                                                    IdentitySession identitySession) {
 
         String method = step.getMethod().toUpperCase();
         boolean isRetryable = "GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method);
@@ -172,7 +184,7 @@ public class HttpExecutionEngine {
                 attempt++;
                 long startNanos = System.nanoTime();
                 try {
-                    return dispatchPinnedRaw(step, targetUrl, validatedTarget, method, requestBody, context, authType, authCredentials, execution, startNanos);
+                    return dispatchPinnedRaw(step, targetUrl, validatedTarget, method, requestBody, context, authType, authCredentials, identitySession, execution, startNanos);
                 } catch (SocketTimeoutException e) {
                     long latencyMs = Math.max(1, (System.nanoTime() - startNanos) / 1_000_000);
                     execution.setLatencyMs(latencyMs);
@@ -222,7 +234,7 @@ public class HttpExecutionEngine {
                 }
 
                 // Inject Authentication
-                applyAuth(connection, authType, authCredentials);
+                applyAuth(connection, authType, authCredentials, identitySession);
 
                 // Apply Custom Headers (e.g. If-None-Match, Idempotency-Key)
                 if (step.getRequestHeaders() != null && !step.getRequestHeaders().isBlank()) {
@@ -389,21 +401,52 @@ public class HttpExecutionEngine {
         return new StepExecutionOutcome(StepStatus.FAILED, execution, Collections.emptyList(), "Execution failed after maximum retries");
     }
 
-    private void applyAuth(HttpURLConnection connection, String authType, String credentials) {
+    private void applyAuth(HttpURLConnection connection, String authType, String credentials, IdentitySession identitySession) {
+        if (identitySession != null) {
+            if (identitySession.getAccessToken() != null && !identitySession.getAccessToken().isBlank()) {
+                connection.setRequestProperty("Authorization", "Bearer " + identitySession.getAccessToken().trim());
+            }
+            if (identitySession.getAuthHeaders() != null) {
+                identitySession.getAuthHeaders().forEach(connection::setRequestProperty);
+            }
+            if (identitySession.getCookieHeader() != null && !identitySession.getCookieHeader().isBlank()) {
+                connection.setRequestProperty("Cookie", identitySession.getCookieHeader());
+            }
+            return;
+        }
+
         if (authType == null || credentials == null || credentials.isBlank() || "NONE".equalsIgnoreCase(authType)) {
             return;
         }
 
         switch (authType.toUpperCase()) {
             case "BEARER":
+            case "BEARER_TOKEN":
                 connection.setRequestProperty("Authorization", "Bearer " + credentials.trim());
                 break;
             case "API_KEY":
-                connection.setRequestProperty("X-Api-Key", credentials.trim());
+                if (credentials.contains(":")) {
+                    String[] parts = credentials.split(":", 2);
+                    connection.setRequestProperty(parts[0].trim(), parts[1].trim());
+                } else {
+                    connection.setRequestProperty("X-Api-Key", credentials.trim());
+                }
                 break;
             case "BASIC":
+            case "BASIC_AUTH":
                 String encoded = Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
                 connection.setRequestProperty("Authorization", "Basic " + encoded);
+                break;
+            case "COOKIE":
+                connection.setRequestProperty("Cookie", credentials.trim());
+                break;
+            case "CUSTOM_HEADER":
+                if (credentials.contains(":")) {
+                    String[] parts = credentials.split(":", 2);
+                    connection.setRequestProperty(parts[0].trim(), parts[1].trim());
+                } else {
+                    connection.setRequestProperty("X-Auth-Token", credentials.trim());
+                }
                 break;
         }
     }
@@ -501,6 +544,7 @@ public class HttpExecutionEngine {
                                                    ExecutionContext context,
                                                    String authType,
                                                    String authCredentials,
+                                                   IdentitySession identitySession,
                                                    Execution execution,
                                                    long startNanos) throws Exception {
 
@@ -558,17 +602,45 @@ public class HttpExecutionEngine {
             }
 
             // Auth
-            if (authType != null && authCredentials != null && !authCredentials.isBlank() && !"NONE".equalsIgnoreCase(authType)) {
+            if (identitySession != null) {
+                if (identitySession.getAccessToken() != null && !identitySession.getAccessToken().isBlank()) {
+                    req.append("Authorization: Bearer ").append(identitySession.getAccessToken().trim()).append("\r\n");
+                }
+                if (identitySession.getAuthHeaders() != null) {
+                    identitySession.getAuthHeaders().forEach((k, v) -> req.append(k).append(": ").append(v).append("\r\n"));
+                }
+                if (identitySession.getCookieHeader() != null && !identitySession.getCookieHeader().isBlank()) {
+                    req.append("Cookie: ").append(identitySession.getCookieHeader()).append("\r\n");
+                }
+            } else if (authType != null && authCredentials != null && !authCredentials.isBlank() && !"NONE".equalsIgnoreCase(authType)) {
                 switch (authType.toUpperCase()) {
                     case "BEARER":
+                    case "BEARER_TOKEN":
                         req.append("Authorization: Bearer ").append(authCredentials.trim()).append("\r\n");
                         break;
                     case "API_KEY":
-                        req.append("X-Api-Key: ").append(authCredentials.trim()).append("\r\n");
+                        if (authCredentials.contains(":")) {
+                            String[] p = authCredentials.split(":", 2);
+                            req.append(p[0].trim()).append(": ").append(p[1].trim()).append("\r\n");
+                        } else {
+                            req.append("X-Api-Key: ").append(authCredentials.trim()).append("\r\n");
+                        }
                         break;
                     case "BASIC":
+                    case "BASIC_AUTH":
                         String encoded = Base64.getEncoder().encodeToString(authCredentials.getBytes(StandardCharsets.UTF_8));
                         req.append("Authorization: Basic ").append(encoded).append("\r\n");
+                        break;
+                    case "COOKIE":
+                        req.append("Cookie: ").append(authCredentials.trim()).append("\r\n");
+                        break;
+                    case "CUSTOM_HEADER":
+                        if (authCredentials.contains(":")) {
+                            String[] p = authCredentials.split(":", 2);
+                            req.append(p[0].trim()).append(": ").append(p[1].trim()).append("\r\n");
+                        } else {
+                            req.append("X-Auth-Token: ").append(authCredentials.trim()).append("\r\n");
+                        }
                         break;
                 }
             }

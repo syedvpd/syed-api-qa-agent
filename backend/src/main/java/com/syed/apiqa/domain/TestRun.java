@@ -81,6 +81,11 @@ public class TestRun {
     @Column(name = "auth_refresh_url", length = 512)
     private String authRefreshUrl;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Convert(converter = com.syed.apiqa.safety.EncryptedStringConverter.class)
+    @Column(name = "credential_profiles_json", columnDefinition = "TEXT")
+    private String credentialProfilesJson;
+
     @Column(name = "cleanup_status", length = 32)
     private String cleanupStatus = "NOT_RUN";
 
@@ -210,6 +215,9 @@ public class TestRun {
 
     public String getCoverageSummaryJson() { return coverageSummaryJson; }
     public void setCoverageSummaryJson(String coverageSummaryJson) { this.coverageSummaryJson = coverageSummaryJson; }
+
+    public String getCredentialProfilesJson() { return credentialProfilesJson; }
+    public void setCredentialProfilesJson(String credentialProfilesJson) { this.credentialProfilesJson = credentialProfilesJson; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

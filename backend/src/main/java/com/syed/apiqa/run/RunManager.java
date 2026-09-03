@@ -58,6 +58,10 @@ public class RunManager {
     private final RunAuditEventRepository auditEventRepository;
     private final com.syed.apiqa.coverage.CoverageCalculationService coverageCalculationService;
     private final com.syed.apiqa.safety.SecretMasker secretMasker;
+    private final com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService;
+    private final com.syed.apiqa.auth.engine.IdentitySessionManager identitySessionManager;
+    private final com.syed.apiqa.auth.matrix.AuthorizationMatrixEngine authorizationMatrixEngine;
+    private final com.syed.apiqa.discovery.ContractNormalizationService normalizationService;
 
     // Concurrency limiter: dynamically configured via syed.safety.max-concurrency
     private final int maxConcurrency;
@@ -89,7 +93,11 @@ public class RunManager {
                       RunAuditEventRepository auditEventRepository,
                       com.syed.apiqa.coverage.CoverageCalculationService coverageCalculationService,
                       @org.springframework.beans.factory.annotation.Value("${syed.safety.max-concurrency:5}") int maxConcurrency,
-                      com.syed.apiqa.safety.SecretMasker secretMasker) {
+                      com.syed.apiqa.safety.SecretMasker secretMasker,
+                      com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService,
+                      com.syed.apiqa.auth.engine.IdentitySessionManager identitySessionManager,
+                      com.syed.apiqa.auth.matrix.AuthorizationMatrixEngine authorizationMatrixEngine,
+                      com.syed.apiqa.discovery.ContractNormalizationService normalizationService) {
         this.fetchService = fetchService;
         this.parserService = parserService;
         this.dependencyEngine = dependencyEngine;
@@ -114,6 +122,10 @@ public class RunManager {
         this.maxConcurrency = maxConcurrency > 0 ? maxConcurrency : 5;
         this.concurrencyLimiter = new Semaphore(this.maxConcurrency, true);
         this.secretMasker = secretMasker;
+        this.preflightService = preflightService;
+        this.identitySessionManager = identitySessionManager;
+        this.authorizationMatrixEngine = authorizationMatrixEngine;
+        this.normalizationService = normalizationService;
     }
 
     /**
@@ -213,6 +225,11 @@ public class RunManager {
 
     @Async
     public void executeRunAsync(String testRunId, String authType, String authCredentials) {
+        executeRunAsync(testRunId, authType, authCredentials, null);
+    }
+
+    @Async
+    public void executeRunAsync(String testRunId, String authType, String authCredentials, List<com.syed.apiqa.auth.CredentialProfile> profiles) {
         TestRun run = testRunRepository.findById(testRunId).orElse(null);
         if (run == null) {
             log.error("Cannot execute run: TestRun ID {} not found in database", testRunId);
@@ -267,6 +284,16 @@ public class RunManager {
                 sseEventService.publishEvent(run.getId(), "API_DISCOVERED", Map.of("method", ep.getMethod(), "path", ep.getPath()));
             }
 
+            // Multi-Identity Authentication Preflight & Matrix Initialization
+            List<com.syed.apiqa.auth.CredentialProfile> activeProfiles = profiles;
+            if ((activeProfiles == null || activeProfiles.isEmpty()) && run.getCredentialProfilesJson() != null) {
+                try {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    activeProfiles = mapper.readValue(run.getCredentialProfilesJson(),
+                            mapper.getTypeFactory().constructCollectionType(List.class, com.syed.apiqa.auth.CredentialProfile.class));
+                } catch (Exception ignored) {}
+            }
+
             // -------------------------------------------------------------
             // Stage 2: PLANNING (Dependency Graph & Test Plan Formulation)
             // -------------------------------------------------------------
@@ -311,6 +338,29 @@ public class RunManager {
             recordAudit(run, "EXECUTION_STARTED", "SYSTEM", "Executing " + totalStepsCount + " planned steps.");
 
             ExecutionContext context = new ExecutionContext(run.getId());
+
+            var normResult = normalizationService.normalize(discovery.getOpenAPI(), run.getOpenapiUrl());
+            com.syed.apiqa.domain.canonical.CanonicalApiModel canonicalModel = normResult.model();
+
+            if (activeProfiles != null && !activeProfiles.isEmpty()) {
+                sseEventService.publishEvent(run.getId(), "AUTH_PREFLIGHT_STARTED", Map.of("profilesCount", activeProfiles.size()));
+                var preflightReport = preflightService.executePreflight(run.getId(), activeProfiles, discovery.getResolvedBaseUrl());
+                sseEventService.publishEvent(run.getId(), "AUTH_PREFLIGHT_COMPLETED", Map.of(
+                        "totalIdentities", preflightReport.totalIdentities(),
+                        "authenticatedCount", preflightReport.authenticatedCount(),
+                        "allPassed", preflightReport.allPassed()
+                ));
+
+                for (com.syed.apiqa.auth.CredentialProfile cp : activeProfiles) {
+                    com.syed.apiqa.auth.IdentitySession session = identitySessionManager.getOrCreateSession(run.getId(), cp);
+                    context.registerSession(session);
+                }
+
+                var matrixCells = authorizationMatrixEngine.buildMatrix(canonicalModel, activeProfiles, context.getAllSessions());
+                sseEventService.publishEvent(run.getId(), "AUTHORIZATION_MATRIX_BUILT", Map.of(
+                        "totalCombinations", matrixCells.size()
+                ));
+            }
 
             // Dynamic Authentication Login
             if (run.getAuthLoginUrl() != null && !run.getAuthLoginUrl().isBlank()) {
@@ -553,13 +603,19 @@ public class RunManager {
                     "method", step.getMethod()
             ));
 
+            com.syed.apiqa.auth.IdentitySession idSession = null;
+            if (context.getAllSessions() != null && !context.getAllSessions().isEmpty()) {
+                idSession = context.getAllSessions().values().iterator().next();
+            }
+
             HttpExecutionEngine.StepExecutionOutcome outcome = httpEngine.executeStep(
                     step,
                     run.getTargetBaseUrl(),
                     context,
                     run.getEnvironmentType(),
                     authType,
-                    authCredentials
+                    authCredentials,
+                    idSession
             );
 
             // Dynamic token refresh on 401

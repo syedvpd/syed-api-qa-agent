@@ -53,7 +53,7 @@ public class OpenApiParserService {
         options.setResolve(false); // Prevents external network requests during parsing (SSRF protection)
         options.setResolveFully(false); // Prevents stack overflow on circular references
 
-        SwaggerParseResult parseResult = new OpenAPIV3Parser().readContents(specContent, null, options);
+        SwaggerParseResult parseResult = new io.swagger.parser.OpenAPIParser().readContents(specContent, null, options);
 
         if (parseResult == null || parseResult.getOpenAPI() == null) {
             List<String> messages = parseResult != null ? parseResult.getMessages() : Collections.emptyList();
