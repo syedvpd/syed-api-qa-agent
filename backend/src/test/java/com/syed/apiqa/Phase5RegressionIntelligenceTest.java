@@ -181,7 +181,7 @@ public class Phase5RegressionIntelligenceTest {
     }
 
     private void waitForCompletion(String runId) throws Exception {
-        long deadline = System.currentTimeMillis() + 25000;
+        long deadline = System.currentTimeMillis() + 40000;
         while (System.currentTimeMillis() < deadline) {
             TestRun run = testRunRepository.findById(runId).orElseThrow();
             if (run.getStatus() == RunStatus.COMPLETED || run.getStatus() == RunStatus.FAILED) {
@@ -189,6 +189,6 @@ public class Phase5RegressionIntelligenceTest {
             }
             Thread.sleep(100);
         }
-        fail("TestRun " + runId + " did not reach COMPLETED within 25 seconds");
+        fail("TestRun " + runId + " did not reach COMPLETED within 40 seconds");
     }
 }

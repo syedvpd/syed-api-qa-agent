@@ -79,6 +79,16 @@ public class SecurityDecisionEngine {
             decision.setExecutionAllowed(true);
             decision.setConfidence(bestMatch.confidence);
             decision.setReason("Selected identity [" + bestMatch.profile.getName() + "] matching required schemes/scopes: " + bestMatch.matchReason);
+        } else if (profiles == null || profiles.isEmpty()) {
+            // When no explicit multi-identity profiles are specified, allow execution with the run's primary credentials
+            CredentialProfile defaultProfile = new CredentialProfile();
+            defaultProfile.setId("primary-identity");
+            defaultProfile.setName("Primary Identity");
+            defaultProfile.setStrategy(CredentialProfile.AuthStrategy.BEARER_TOKEN);
+            decision.setSelectedIdentity(defaultProfile);
+            decision.setExecutionAllowed(true);
+            decision.setConfidence("HIGH");
+            decision.setReason("Using run primary authentication session for secured operation.");
         } else {
             decision.setSelectedIdentity(null);
             decision.setExecutionAllowed(false);

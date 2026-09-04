@@ -405,6 +405,19 @@ public class RunManager {
                 }
             }
 
+            if (authCredentials != null && !authCredentials.isBlank()) {
+                com.syed.apiqa.auth.IdentitySession primarySession = new com.syed.apiqa.auth.IdentitySession("primary-identity", "Primary Identity");
+                primarySession.setState(com.syed.apiqa.auth.canonical.AuthLifecycleState.AUTHENTICATED);
+                primarySession.setAccessToken(authCredentials.trim());
+                primarySession.setAuthStrategy(authType != null ? authType : "BEARER");
+                if ("API_KEY".equalsIgnoreCase(authType)) {
+                    primarySession.setAuthHeader("X-Api-Key", authCredentials.trim());
+                } else {
+                    primarySession.setAuthHeader("Authorization", "Bearer " + authCredentials.trim());
+                }
+                context.registerSession(primarySession);
+            }
+
             AtomicInteger passedCounter = new AtomicInteger(0);
             AtomicInteger failedCounter = new AtomicInteger(0);
             AtomicInteger blockedCounter = new AtomicInteger(0);
@@ -618,6 +631,12 @@ public class RunManager {
             com.syed.apiqa.auth.IdentitySession idSession = null;
             if (decision.getSelectedIdentity() != null && context.getAllSessions() != null) {
                 idSession = context.getSession(decision.getSelectedIdentity().getId());
+                if (idSession == null) {
+                    idSession = context.getSession(decision.getSelectedIdentity().getName());
+                }
+            }
+            if (idSession == null && context.getAllSessions() != null) {
+                idSession = context.getSession("primary-identity");
             }
 
             if (decision.getSecurityState() == com.syed.apiqa.auth.engine.OperationSecurityDecision.SecurityState.AUTH_REQUIRED) {
