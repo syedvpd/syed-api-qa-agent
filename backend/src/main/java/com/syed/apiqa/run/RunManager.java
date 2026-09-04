@@ -292,8 +292,23 @@ public class RunManager {
             sseEventService.publishEvent(run.getId(), "DISCOVERY_STARTED", Map.of("openapiUrl", run.getOpenapiUrl()));
             recordAudit(run, "DISCOVERY_STARTED", "SYSTEM", "Fetching specification: " + run.getOpenapiUrl());
 
-            String rawSpec = fetchService.fetchSpecification(run.getOpenapiUrl());
-            OpenApiParserService.DiscoveryResult discovery = parserService.parse(rawSpec, run.getOpenapiUrl(), run);
+            com.syed.apiqa.discovery.OpenApiDiscoveryResult discoveryResult = fetchService.fetchSpecificationResult(run.getOpenapiUrl());
+            String rawSpec = discoveryResult.getContent();
+            String specUrlToParse = discoveryResult.getDiscoveredSpecUrl();
+
+            if (!discoveryResult.getOriginalUrl().equalsIgnoreCase(specUrlToParse)) {
+                log.info("Specification resolved via {}: Input={} -> Spec={}",
+                        discoveryResult.getDiscoveryMethod(), discoveryResult.getOriginalUrl(), specUrlToParse);
+                recordAudit(run, "SPEC_DISCOVERED", "SYSTEM",
+                        "Specification resolved via " + discoveryResult.getDiscoveryMethod() + ": " + specUrlToParse);
+                sseEventService.publishEvent(run.getId(), "SPEC_DISCOVERED", Map.of(
+                        "inputUrl", discoveryResult.getOriginalUrl(),
+                        "discoveredSpecUrl", specUrlToParse,
+                        "discoveryMethod", discoveryResult.getDiscoveryMethod().name()
+                ));
+            }
+
+            OpenApiParserService.DiscoveryResult discovery = parserService.parse(rawSpec, specUrlToParse, run);
 
             run.setTargetBaseUrl(discovery.getResolvedBaseUrl());
             run.setTotalEndpoints(discovery.getEndpoints().size());

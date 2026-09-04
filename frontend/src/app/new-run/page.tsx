@@ -155,21 +155,21 @@ export default function NewRunPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* OpenAPI URL Section */}
+        {/* OpenAPI / Documentation URL Section */}
         <div className="bg-slate-900/60 p-6 rounded-xl border border-slate-800 space-y-4">
           <label className="block text-sm font-semibold text-slate-200">
-            OpenAPI / Swagger Specification URL <span className="text-rose-400">*</span>
+            API Documentation or OpenAPI Specification URL <span className="text-rose-400">*</span>
           </label>
           <input
             type="url"
             required
             value={openapiUrl}
             onChange={(e) => setOpenapiUrl(e.target.value)}
-            placeholder="https://api.example.com/v3/api-docs or swagger.json"
+            placeholder="https://skylinecrest-realty.onrender.com/api/redoc/, /api/docs, or /v3/api-docs"
             className="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 text-sm font-mono"
           />
-          <p className="text-xs text-slate-500">
-            Supports OpenAPI 3.0, 3.1, and Swagger 2.0 specs (JSON or YAML).
+          <p className="text-xs text-slate-400">
+            You can provide a direct OpenAPI JSON/YAML URL or a Swagger UI/ReDoc/API docs URL. The agent will attempt deterministic specification discovery. Supports OpenAPI 3.0, 3.1, and Swagger 2.0 specs.
           </p>
         </div>
 
