@@ -17,6 +17,7 @@ public class IdentitySession implements Serializable {
 
     private final String identityId;
     private final String identityName;
+    private String testRunId;
     private String tenantId;
     private String authStrategy;
     private AuthLifecycleState state = AuthLifecycleState.CREATED;
@@ -38,6 +39,9 @@ public class IdentitySession implements Serializable {
         this.identityId = identityId;
         this.identityName = identityName;
     }
+
+    public String getTestRunId() { return testRunId; }
+    public void setTestRunId(String testRunId) { this.testRunId = testRunId; }
 
     public String getIdentityId() { return identityId; }
     public String getIdentityName() { return identityName; }

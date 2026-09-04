@@ -33,15 +33,26 @@ public class TestPlanService {
     private final NegativeDataGenerator negativeGenerator;
     private final DependencyEngine dependencyEngine;
     private final ObjectMapper objectMapper;
+    private final com.syed.apiqa.discovery.OpenApiSchemaRegistry openApiSchemaRegistry;
 
     public TestPlanService(DeterministicDataGenerator dataGenerator,
                            NegativeDataGenerator negativeGenerator,
                            DependencyEngine dependencyEngine,
                            ObjectMapper objectMapper) {
+        this(dataGenerator, negativeGenerator, dependencyEngine, objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TestPlanService(DeterministicDataGenerator dataGenerator,
+                           NegativeDataGenerator negativeGenerator,
+                           DependencyEngine dependencyEngine,
+                           ObjectMapper objectMapper,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false) com.syed.apiqa.discovery.OpenApiSchemaRegistry openApiSchemaRegistry) {
         this.dataGenerator = dataGenerator;
         this.negativeGenerator = negativeGenerator;
         this.dependencyEngine = dependencyEngine;
         this.objectMapper = objectMapper;
+        this.openApiSchemaRegistry = openApiSchemaRegistry;
     }
 
     public static class PlanResult {
@@ -62,6 +73,9 @@ public class TestPlanService {
     }
 
     public PlanResult buildTestPlan(TestRun testRun, List<ApiEndpoint> endpoints, List<Dependency> dependencies, Map<String, Schema> openApiSchemas) {
+        if ((openApiSchemas == null || openApiSchemas.isEmpty()) && openApiSchemaRegistry != null && testRun != null) {
+            openApiSchemas = openApiSchemaRegistry.getSchemas(testRun.getId());
+        }
         List<TestCase> testCases = new ArrayList<>();
         Map<String, List<TestStep>> stepsByCaseId = new HashMap<>();
 
@@ -113,21 +127,21 @@ public class TestPlanService {
 
                 // Step 1: POST /entity (CREATE)
                 int postExpected = extractExpectedStatus(postEp, 201);
-                TestStep createStep = createStepWithParams(crudCase, postEp, stepOrder++, "CREATE " + entity, "POST", postEp.getPath(), postExpected, testRun.getId(), entity);
+                TestStep createStep = createStepWithParams(crudCase, postEp, stepOrder++, "CREATE " + entity, "POST", postEp.getPath(), postExpected, testRun.getId(), entity, openApiSchemas);
                 steps.add(createStep);
                 plannedEndpointIds.add(postEp.getId());
 
                 // Step 2: GET /entity/{id} (READ after create)
                 String getPath = replacePathParamWithVar(getByIdEp.getPath(), "{{" + entity + ".id}}");
                 int getExpected = extractExpectedStatus(getByIdEp, 200);
-                TestStep readStep1 = createStepWithParams(crudCase, getByIdEp, stepOrder++, "READ " + entity + " by ID", "GET", getPath, getExpected, testRun.getId(), entity);
+                TestStep readStep1 = createStepWithParams(crudCase, getByIdEp, stepOrder++, "READ " + entity + " by ID", "GET", getPath, getExpected, testRun.getId(), entity, openApiSchemas);
                 steps.add(readStep1);
 
                 // Step 2b: Conditional ETag GET /entity/{id} only if contract specifies ETag or 304
                 if (getByIdEp.getResponseSchemas() != null &&
                         (getByIdEp.getResponseSchemas().toLowerCase().contains("etag") ||
                          getByIdEp.getResponseSchemas().contains("304"))) {
-                    TestStep condStep = createStepWithParams(crudCase, getByIdEp, stepOrder++, "CONDITIONAL READ " + entity + " (If-None-Match)", "GET", getPath, 304, testRun.getId(), entity);
+                    TestStep condStep = createStepWithParams(crudCase, getByIdEp, stepOrder++, "CONDITIONAL READ " + entity + " (If-None-Match)", "GET", getPath, 304, testRun.getId(), entity, openApiSchemas);
                     condStep.setRequestHeaders("If-None-Match: {{" + entity + ".etag}}");
                     steps.add(condStep);
                 }
@@ -136,12 +150,12 @@ public class TestPlanService {
                 if (updateEp != null) {
                     String updatePath = replacePathParamWithVar(updateEp.getPath(), "{{" + entity + ".id}}");
                     int updateExpected = extractExpectedStatus(updateEp, 200);
-                    TestStep updateStep = createStepWithParams(crudCase, updateEp, stepOrder++, "UPDATE " + entity, updateEp.getMethod(), updatePath, updateExpected, testRun.getId(), entity);
+                    TestStep updateStep = createStepWithParams(crudCase, updateEp, stepOrder++, "UPDATE " + entity, updateEp.getMethod(), updatePath, updateExpected, testRun.getId(), entity, openApiSchemas);
                     steps.add(updateStep);
                     plannedEndpointIds.add(updateEp.getId());
 
                     // Step 4: GET /entity/{id} (READ after update)
-                    TestStep readStep2 = createStepWithParams(crudCase, getByIdEp, stepOrder++, "VERIFY UPDATE " + entity, "GET", getPath, getExpected, testRun.getId(), entity);
+                    TestStep readStep2 = createStepWithParams(crudCase, getByIdEp, stepOrder++, "VERIFY UPDATE " + entity, "GET", getPath, getExpected, testRun.getId(), entity, openApiSchemas);
                     steps.add(readStep2);
                 }
 
@@ -149,12 +163,12 @@ public class TestPlanService {
                 if (deleteEp != null) {
                     String deletePath = replacePathParamWithVar(deleteEp.getPath(), "{{" + entity + ".id}}");
                     int deleteExpected = extractExpectedStatus(deleteEp, 204);
-                    TestStep deleteStep = createStepWithParams(crudCase, deleteEp, stepOrder++, "DELETE " + entity, "DELETE", deletePath, deleteExpected, testRun.getId(), entity);
+                    TestStep deleteStep = createStepWithParams(crudCase, deleteEp, stepOrder++, "DELETE " + entity, "DELETE", deletePath, deleteExpected, testRun.getId(), entity, openApiSchemas);
                     steps.add(deleteStep);
                     plannedEndpointIds.add(deleteEp.getId());
 
                     // Step 6: GET /entity/{id} (VERIFY 404 NOT FOUND)
-                    TestStep verify404Step = createStepWithParams(crudCase, getByIdEp, stepOrder++, "VERIFY 404 AFTER DELETE " + entity, "GET", getPath, 404, testRun.getId(), entity);
+                    TestStep verify404Step = createStepWithParams(crudCase, getByIdEp, stepOrder++, "VERIFY 404 AFTER DELETE " + entity, "GET", getPath, 404, testRun.getId(), entity, openApiSchemas);
                     steps.add(verify404Step);
                 }
 
@@ -183,7 +197,7 @@ public class TestPlanService {
                 singleCase.setStatus(StepStatus.PENDING);
                 singleCase.setCreatedAt(OffsetDateTime.now());
 
-                TestStep step = createStepWithParams(singleCase, ep, 1, ep.getMethod() + " " + ep.getPath(), ep.getMethod(), ep.getPath(), expectedStatus, testRun.getId(), entity);
+                TestStep step = createStepWithParams(singleCase, ep, 1, ep.getMethod() + " " + ep.getPath(), ep.getMethod(), ep.getPath(), expectedStatus, testRun.getId(), entity, openApiSchemas);
                 testCases.add(singleCase);
                 stepsByCaseId.put(singleCase.getId(), Collections.singletonList(step));
                 plannedEndpointIds.add(ep.getId());
@@ -212,13 +226,13 @@ public class TestPlanService {
                 int pOrder = 1;
                 int exp = extractExpectedStatus(ep, 200);
 
-                TestStep p1 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 1)", "GET", ep.getPath() + "?page=1&pageSize=10", exp, testRun.getId(), null);
+                TestStep p1 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 1)", "GET", ep.getPath() + "?page=1&pageSize=10", exp, testRun.getId(), null, openApiSchemas);
                 pageSteps.add(p1);
 
-                TestStep p2 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 2)", "GET", ep.getPath() + "?page=2&pageSize=10", exp, testRun.getId(), null);
+                TestStep p2 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Page 2)", "GET", ep.getPath() + "?page=2&pageSize=10", exp, testRun.getId(), null, openApiSchemas);
                 pageSteps.add(p2);
 
-                TestStep p3 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Filter & Sort)", "GET", ep.getPath() + "?search=test&sort=asc", exp, testRun.getId(), null);
+                TestStep p3 = createStepWithParams(pageCase, ep, pOrder++, "GET " + ep.getPath() + " (Filter & Sort)", "GET", ep.getPath() + "?search=test&sort=asc", exp, testRun.getId(), null, openApiSchemas);
                 pageSteps.add(p3);
 
                 testCases.add(pageCase);

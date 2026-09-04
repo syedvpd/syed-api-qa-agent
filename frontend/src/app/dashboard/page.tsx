@@ -219,21 +219,15 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-slate-800/40 pb-1">
-                  <span className="text-slate-500">TEST OPERATIONS EXECUTED:</span>
+                  <span className="text-slate-500">LIFETIME TEST STEPS:</span>
                   <span className="text-slate-200 font-semibold">
-                    {totalExecutedSteps > 0 ? `${totalExecutedSteps} VERIFIED STEPS` : "--"}
+                    {totalExecutedSteps > 0 ? `${totalExecutedSteps} AGGREGATE STEPS (${runs.length} RUNS)` : "--"}
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-slate-800/40 pb-1">
-                  <span className="text-slate-500">SYSTEM PASS RATE:</span>
-                  <span
-                    className={
-                      passRate ? "text-emerald-400 font-bold" : "text-slate-500"
-                    }
-                  >
-                    {passRate
-                      ? `${passRate}% (${totalPassed}P / ${totalFailed}F / ${totalBlocked}B)`
-                      : "--"}
+                  <span className="text-slate-500">LATEST RUN ACCOUNTING:</span>
+                  <span className="text-slate-200 font-semibold">
+                    {latestRun ? `${latestRun.totalTests || 0} TESTS (${latestRun.passedTests || 0}P / ${latestRun.failedTests || 0}F / ${latestRun.blockedTests || 0}B)` : "--"}
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-slate-800/40 pb-1">

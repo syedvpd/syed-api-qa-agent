@@ -62,16 +62,31 @@ public class DeterministicDataGenerator {
             return success.value();
         }
 
-        // Guaranteed: Never return "root_..." scalar string for an object or array schema!
-        String type = schema.getType();
-        if ("object".equalsIgnoreCase(type) || schema.getProperties() != null) {
-            return new LinkedHashMap<String, Object>();
+        // Guaranteed: Never return scalar fallback string for an object or array schema!
+        Schema<?> targetSchema = schema;
+        if (targetSchema.get$ref() != null && openApiSchemas != null) {
+            String refKey = targetSchema.get$ref().substring(targetSchema.get$ref().lastIndexOf('/') + 1);
+            Schema<?> resolved = openApiSchemas.get(refKey);
+            if (resolved != null) {
+                targetSchema = resolved;
+            }
         }
-        if ("array".equalsIgnoreCase(type) || schema.getItems() != null) {
+
+        String type = targetSchema.getType();
+        if ("object".equalsIgnoreCase(type) || targetSchema.getProperties() != null || targetSchema.get$ref() != null) {
+            Map<String, Object> fallbackObj = new LinkedHashMap<>();
+            if (targetSchema.getProperties() != null) {
+                for (Map.Entry<String, Schema> entry : targetSchema.getProperties().entrySet()) {
+                    fallbackObj.put(entry.getKey(), generateValueForSchema(entry.getValue(), entry.getKey(), random, runIdPrefix, openApiSchemas));
+                }
+            }
+            return fallbackObj;
+        }
+        if ("array".equalsIgnoreCase(type) || targetSchema.getItems() != null) {
             return Collections.emptyList();
         }
 
-        return "safe_fallback_" + Math.abs(random.nextInt(1000));
+        return "safe_val_" + Math.abs(random.nextInt(1000));
     }
 
     @SuppressWarnings("unchecked")
@@ -85,6 +100,17 @@ public class DeterministicDataGenerator {
 
     public String generateJsonString(Schema<?> schema, String runIdPrefix, Map<String, Schema> openApiSchemas) {
         Object val = generateValueForSchema(schema, "root", new Random(), runIdPrefix, openApiSchemas);
+        if (val instanceof String str && (str.startsWith("safe_") || str.startsWith("root_"))) {
+            Schema<?> target = schema;
+            if (target != null && target.get$ref() != null && openApiSchemas != null) {
+                String refKey = target.get$ref().substring(target.get$ref().lastIndexOf('/') + 1);
+                Schema<?> refSchema = openApiSchemas.get(refKey);
+                if (refSchema != null) target = refSchema;
+            }
+            if (target != null && ("object".equalsIgnoreCase(target.getType()) || target.getProperties() != null || target.get$ref() != null)) {
+                val = new LinkedHashMap<String, Object>();
+            }
+        }
         try {
             return objectMapper.writeValueAsString(val);
         } catch (Exception e) {

@@ -64,6 +64,8 @@ public class RunManager {
     private final com.syed.apiqa.discovery.ContractNormalizationService normalizationService;
     private final com.syed.apiqa.intelligence.FailureIntelligenceService failureIntelligenceService;
     private final com.syed.apiqa.auth.engine.SecurityDecisionEngine securityDecisionEngine;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.syed.apiqa.discovery.OpenApiSchemaRegistry openApiSchemaRegistry;
 
     // Concurrency limiter: dynamically configured via syed.safety.max-concurrency
     private final int maxConcurrency;
@@ -300,6 +302,10 @@ public class RunManager {
             for (ApiEndpoint ep : discovery.getEndpoints()) {
                 apiEndpointRepository.save(ep);
                 sseEventService.publishEvent(run.getId(), "API_DISCOVERED", Map.of("method", ep.getMethod(), "path", ep.getPath()));
+            }
+
+            if (openApiSchemaRegistry != null && discovery.getOpenAPI() != null) {
+                openApiSchemaRegistry.registerOpenApi(run.getId(), discovery.getOpenAPI());
             }
 
             // Multi-Identity Authentication Preflight & Matrix Initialization

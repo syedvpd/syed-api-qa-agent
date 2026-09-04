@@ -88,7 +88,19 @@ public class ExamplePriorityEngine {
         }
 
         // Return deterministic fallback only if schema was completely unspecified
-        String fallback = "safe_fallback_" + Math.abs(random.nextInt(1000));
+        if (schema != null) {
+            String type = schema.getType();
+            if ("object".equalsIgnoreCase(type) || schema.getProperties() != null || schema.get$ref() != null) {
+                traces.add(new GenerationTrace("root", "OBJECT_FALLBACK", "Fallback empty object for object schema", ExamplePriority.SAFE_DETERMINISTIC_FALLBACK.getDefaultConfidence()));
+                return new ResolvedPayload(new LinkedHashMap<String, Object>(), ExamplePriority.SAFE_DETERMINISTIC_FALLBACK, ExamplePriority.SAFE_DETERMINISTIC_FALLBACK.getDefaultConfidence(), traces);
+            }
+            if ("array".equalsIgnoreCase(type) || schema.getItems() != null) {
+                traces.add(new GenerationTrace("root", "ARRAY_FALLBACK", "Fallback empty array for array schema", ExamplePriority.SAFE_DETERMINISTIC_FALLBACK.getDefaultConfidence()));
+                return new ResolvedPayload(Collections.emptyList(), ExamplePriority.SAFE_DETERMINISTIC_FALLBACK, ExamplePriority.SAFE_DETERMINISTIC_FALLBACK.getDefaultConfidence(), traces);
+            }
+        }
+
+        String fallback = "safe_val_" + Math.abs(random.nextInt(1000));
         traces.add(new GenerationTrace("root", "SAFE_DETERMINISTIC_FALLBACK", "Fallback after unresolvable schema", ExamplePriority.SAFE_DETERMINISTIC_FALLBACK.getDefaultConfidence()));
         return new ResolvedPayload(fallback, ExamplePriority.SAFE_DETERMINISTIC_FALLBACK, ExamplePriority.SAFE_DETERMINISTIC_FALLBACK.getDefaultConfidence(), traces);
     }

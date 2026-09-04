@@ -273,7 +273,16 @@ public class PdfReportGenerator {
             document.add(new Paragraph(" ", spacerFont(6)));
             return;
         }
-        for (DiagnosticFinding f : d.findings) {
+
+        int maxFindingsToDisplay = Math.min(30, d.findings.size());
+        if (d.findings.size() > 30) {
+            document.add(body(String.format("Displaying top 30 prioritized findings out of %d total diagnostic findings. "
+                    + "Full interactive failure inventory is available in the HTML Report and Results Matrix.", d.findings.size()), TEXT_MUTED));
+            document.add(new Paragraph(" ", spacerFont(3)));
+        }
+
+        for (int i = 0; i < maxFindingsToDisplay; i++) {
+            DiagnosticFinding f = d.findings.get(i);
             Color accent = categoryColor(f.getCategory());
             PdfPTable card = new PdfPTable(2);
             card.setWidthPercentage(100);
@@ -301,6 +310,13 @@ public class PdfReportGenerator {
 
     private void renderExecutionMatrix(Document document, PdfReportData d) throws DocumentException {
         document.add(sectionTitle("API Execution Matrix"));
+        int maxRows = Math.min(100, d.rows.size());
+        if (d.rows.size() > 100) {
+            document.add(body(String.format("Displaying first 100 representative execution entries out of %d total test cases. "
+                    + "Complete interactive matrix with filtering is available in Results Matrix.", d.rows.size()), TEXT_MUTED));
+            document.add(new Paragraph(" ", spacerFont(3)));
+        }
+
         PdfPTable table = new PdfPTable(5);
         table.setWidthPercentage(100);
         table.setWidths(new float[]{7f, 45f, 9f, 9f, 10f});
@@ -311,7 +327,9 @@ public class PdfReportGenerator {
         addHeaderCell(table, "Expected");
         addHeaderCell(table, "Actual");
         addHeaderCell(table, "Verdict");
-        for (MatrixRow r : d.rows) {
+
+        for (int i = 0; i < maxRows; i++) {
+            MatrixRow r = d.rows.get(i);
             table.addCell(cell(String.valueOf(safe(r.method)), slugFont(7, TEXT_PRIMARY)));
             table.addCell(cell(safe(r.path), slugFont(7, TEXT_MUTED)));
             table.addCell(cell(r.expected < 0 ? "-" : String.valueOf(r.expected), slugFont(7, TEXT_PRIMARY)));

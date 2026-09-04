@@ -32,6 +32,7 @@ public class IdentitySessionManager {
         Map<String, IdentitySession> sessions = runSessions.computeIfAbsent(testRunId, k -> new ConcurrentHashMap<>());
         return sessions.computeIfAbsent(profile.getId(), id -> {
             IdentitySession session = new IdentitySession(profile.getId(), profile.getName());
+            session.setTestRunId(testRunId);
             session.setTenantId(profile.getTenantId());
             session.setAuthStrategy(profile.getStrategy().name());
             return session;
