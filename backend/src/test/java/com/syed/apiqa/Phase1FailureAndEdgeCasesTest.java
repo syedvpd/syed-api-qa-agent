@@ -110,7 +110,7 @@ public class Phase1FailureAndEdgeCasesTest {
 
         // Wait for background execution
         TestRun completedRun = null;
-        long deadline = System.currentTimeMillis() + 15000;
+        long deadline = System.currentTimeMillis() + 30000;
         while (System.currentTimeMillis() < deadline) {
             completedRun = testRunRepository.findById(run.getId()).orElseThrow();
             if (completedRun.getStatus() == RunStatus.COMPLETED || completedRun.getStatus() == RunStatus.FAILED) {

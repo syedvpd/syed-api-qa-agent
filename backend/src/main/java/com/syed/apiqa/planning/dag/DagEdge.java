@@ -42,6 +42,14 @@ public class DagEdge implements Serializable {
         this.reason = reason;
     }
 
+    public DagEdge(String producerNodeId, String consumerNodeId, String parameterName) {
+        this(producerNodeId, consumerNodeId, parameterName, parameterName, ParameterLocation.PATH, ConfidenceLevel.HIGH, "Dependency link");
+    }
+
+    public DagEdge(String producerNodeId, String consumerNodeId) {
+        this(producerNodeId, consumerNodeId, "id");
+    }
+
     public String getProducerNodeId() { return producerNodeId; }
     public String getConsumerNodeId() { return consumerNodeId; }
     public String getParameterName() { return parameterName; }

@@ -31,6 +31,10 @@ public class DependencyGraph implements Serializable {
         }
     }
 
+    public synchronized void addNode(String id, String name, Object payload) {
+        addNode(new DagNode(id, name, payload));
+    }
+
     public synchronized boolean addEdge(DagEdge edge) {
         if (edge == null) return false;
         String from = edge.getProducerNodeId();
@@ -56,6 +60,10 @@ public class DependencyGraph implements Serializable {
         incomingEdges.computeIfAbsent(to, k -> new ArrayList<>()).add(edge);
 
         return true;
+    }
+
+    public synchronized boolean addEdge(String from, String to, String parameterName) {
+        return addEdge(new DagEdge(from, to, parameterName));
     }
 
     public synchronized void recalculateInDegrees() {

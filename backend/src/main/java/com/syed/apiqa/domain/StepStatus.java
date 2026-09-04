@@ -16,5 +16,7 @@ public enum StepStatus {
     CONTRACT_ERROR,
     REQUEST_NOT_EXECUTABLE,
     CLEANUP_FAILED,
+    UNSUPPORTED,
+    NOT_EXECUTED,
     UNKNOWN
 }
