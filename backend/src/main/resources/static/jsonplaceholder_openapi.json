@@ -1,0 +1,424 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "JSONPlaceholder REST API",
+    "description": "Free fake and real-time REST API for testing and prototyping with live CRUD operations on posts, comments, users, and todos.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://jsonplaceholder.typicode.com",
+      "description": "Live JSONPlaceholder Server"
+    }
+  ],
+  "paths": {
+    "/posts": {
+      "get": {
+        "operationId": "listPosts",
+        "summary": "List all posts",
+        "description": "Retrieves all posts with optional filtering",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of posts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Post"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPost",
+        "summary": "Create a new post",
+        "description": "Creates a new post resource on the server",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Post created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/posts/{id}": {
+      "get": {
+        "operationId": "getPostById",
+        "summary": "Get post by ID",
+        "description": "Retrieves a single post by its integer identifier",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Post not found"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updatePost",
+        "summary": "Update post",
+        "description": "Replaces a post by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Post updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePost",
+        "summary": "Delete post",
+        "description": "Removes a post resource by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post deleted"
+          }
+        }
+      }
+    },
+    "/posts/{postId}/comments": {
+      "get": {
+        "operationId": "getPostComments",
+        "summary": "Get comments for a post",
+        "parameters": [
+          {
+            "name": "postId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comments list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/comments": {
+      "get": {
+        "operationId": "listComments",
+        "summary": "List comments",
+        "parameters": [
+          {
+            "name": "postId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comments list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createComment",
+        "summary": "Create a comment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Comment created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List users",
+        "responses": {
+          "200": {
+            "description": "Users list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "operationId": "getUserById",
+        "summary": "Get user by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/todos": {
+      "get": {
+        "operationId": "listTodos",
+        "summary": "List todos",
+        "responses": {
+          "200": {
+            "description": "Todos list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Todo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createTodo",
+        "summary": "Create todo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Todo created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Post": {
+        "type": "object",
+        "required": ["id", "title", "body", "userId"],
+        "properties": {
+          "id": { "type": "integer" },
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "userId": { "type": "integer" }
+        }
+      },
+      "PostInput": {
+        "type": "object",
+        "required": ["title", "body", "userId"],
+        "properties": {
+          "title": { "type": "string", "minLength": 3 },
+          "body": { "type": "string" },
+          "userId": { "type": "integer" }
+        }
+      },
+      "Comment": {
+        "type": "object",
+        "required": ["id", "name", "email", "body", "postId"],
+        "properties": {
+          "id": { "type": "integer" },
+          "postId": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "body": { "type": "string" }
+        }
+      },
+      "CommentInput": {
+        "type": "object",
+        "required": ["name", "email", "body", "postId"],
+        "properties": {
+          "postId": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "body": { "type": "string" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "name", "username", "email"],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "username": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "phone": { "type": "string" },
+          "website": { "type": "string" }
+        }
+      },
+      "Todo": {
+        "type": "object",
+        "required": ["id", "title", "completed", "userId"],
+        "properties": {
+          "id": { "type": "integer" },
+          "userId": { "type": "integer" },
+          "title": { "type": "string" },
+          "completed": { "type": "boolean" }
+        }
+      },
+      "TodoInput": {
+        "type": "object",
+        "required": ["title", "completed", "userId"],
+        "properties": {
+          "userId": { "type": "integer" },
+          "title": { "type": "string" },
+          "completed": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

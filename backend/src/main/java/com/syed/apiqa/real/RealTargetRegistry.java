@@ -102,6 +102,19 @@ public class RealTargetRegistry {
                 "Public HTTP testing target verifying methods, status codes, and headers"
         ));
 
+        // 4. Unknown Live REST Target: JSONPlaceholder
+        targets.add(new RealTarget(
+                "jsonplaceholder",
+                "JSONPlaceholder Live REST API",
+                "https://syed-api-testing-agent.onrender.com/api/specs/jsonplaceholder.json",
+                "https://jsonplaceholder.typicode.com",
+                SpecFormat.OPENAPI_3_0,
+                SafetyClassification.PUBLIC_SANDBOX_WRITE,
+                "NO_AUTH",
+                12,
+                "Live REST API target supporting full CRUD operations, nested comments, and pagination"
+        ));
+
         return targets;
     }
 }
