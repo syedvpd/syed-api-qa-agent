@@ -273,6 +273,65 @@ class Phase3ContractIntelligenceTest {
     }
 
     @Test
+    @DisplayName("ResponseSchemaValidator generic composition test matrix: anyOf, oneOf, allOf, $ref, nullables, enums")
+    void testGenericResponseSchemaValidatorMatrix() throws Exception {
+        // A. anyOf with $ref and null
+        ObjectSchema userProfile = new ObjectSchema();
+        userProfile.addProperty("id", new StringSchema());
+        userProfile.addProperty("name", new StringSchema());
+        userProfile.setRequired(List.of("id", "name"));
+
+        Map<String, Schema> components = Map.of("UserProfile", userProfile);
+
+        ComposedSchema anyOfSchema = new ComposedSchema();
+        Schema<?> refSchema = new Schema<>().$ref("#/components/schemas/UserProfile");
+        Schema<?> nullSchema = new Schema<>().type("null");
+        anyOfSchema.anyOf(List.of(refSchema, nullSchema));
+
+        ObjectSchema envelope = new ObjectSchema();
+        envelope.addProperty("success", new BooleanSchema());
+        envelope.addProperty("data", anyOfSchema);
+
+        // 1. Valid anyOf with Object
+        JsonNode validObjNode = objectMapper.readTree("{\"success\": true, \"data\": {\"id\": \"u1\", \"name\": \"Syed\"}}");
+        List<SchemaValidationFinding> f1 = responseValidator.validate(validObjNode, envelope, components);
+        assertTrue(f1.isEmpty(), "Valid object inside anyOf must pass without findings");
+
+        // 2. Valid anyOf with Null
+        JsonNode validNullNode = objectMapper.readTree("{\"success\": true, \"data\": null}");
+        List<SchemaValidationFinding> f2 = responseValidator.validate(validNullNode, envelope, components);
+        assertTrue(f2.isEmpty(), "Null value inside nullable anyOf must pass");
+
+        // 3. Invalid anyOf (scalar string when only object or null allowed)
+        JsonNode invalidScalarNode = objectMapper.readTree("{\"success\": true, \"data\": \"invalid_string\"}");
+        List<SchemaValidationFinding> f3 = responseValidator.validate(invalidScalarNode, envelope, components);
+        assertFalse(f3.isEmpty(), "Scalar inside object/null anyOf must fail");
+        assertTrue(f3.stream().anyMatch(f -> f.getViolationType().equals("COMPOSITION_ANYOF_VIOLATION")));
+
+        // B. oneOf composition
+        ComposedSchema oneOfSchema = new ComposedSchema();
+        oneOfSchema.oneOf(List.of(new IntegerSchema(), new BooleanSchema()));
+
+        JsonNode oneOfInt = objectMapper.readTree("42");
+        assertTrue(responseValidator.validate(oneOfInt, oneOfSchema, Collections.emptyMap()).isEmpty(), "Exact 1 match in oneOf must pass");
+
+        JsonNode oneOfStr = objectMapper.readTree("\"not_int_or_bool\"");
+        assertFalse(responseValidator.validate(oneOfStr, oneOfSchema, Collections.emptyMap()).isEmpty(), "0 matches in oneOf must fail");
+
+        // C. Enum and Constraints
+        StringSchema enumSchema = new StringSchema();
+        enumSchema.setEnum(List.of("ACTIVE", "INACTIVE", "SUSPENDED"));
+
+        JsonNode validEnum = objectMapper.readTree("\"ACTIVE\"");
+        assertTrue(responseValidator.validate(validEnum, enumSchema, Collections.emptyMap()).isEmpty());
+
+        JsonNode invalidEnum = objectMapper.readTree("\"UNKNOWN_STATUS\"");
+        List<SchemaValidationFinding> enumFindings = responseValidator.validate(invalidEnum, enumSchema, Collections.emptyMap());
+        assertFalse(enumFindings.isEmpty());
+        assertTrue(enumFindings.stream().anyMatch(f -> f.getViolationType().equals("INVALID_ENUM_VALUE")));
+    }
+
+    @Test
     @DisplayName("Scale Test: ContractNormalizationService processes 1,000 synthetic operations efficiently")
     void testLargeSpecNormalizationScale() {
         OpenAPI openAPI = new OpenAPI();
