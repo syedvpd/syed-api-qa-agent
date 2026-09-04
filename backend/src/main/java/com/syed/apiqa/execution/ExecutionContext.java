@@ -131,12 +131,17 @@ public class ExecutionContext {
 
     public void registerSession(IdentitySession session) {
         if (session != null) {
-            sessions.put(session.getIdentityName(), session);
+            if (session.getIdentityId() != null && !session.getIdentityId().isBlank()) {
+                sessions.put(session.getIdentityId(), session);
+            }
+            if (session.getIdentityName() != null && !session.getIdentityName().isBlank()) {
+                sessions.put(session.getIdentityName(), session);
+            }
         }
     }
 
-    public IdentitySession getSession(String identityName) {
-        return identityName != null ? sessions.get(identityName) : null;
+    public IdentitySession getSession(String identityKey) {
+        return identityKey != null ? sessions.get(identityKey) : null;
     }
 
     public Map<String, IdentitySession> getAllSessions() {

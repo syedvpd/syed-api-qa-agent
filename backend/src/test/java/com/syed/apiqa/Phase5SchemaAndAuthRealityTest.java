@@ -11,6 +11,7 @@ import com.syed.apiqa.discovery.OpenApiSchemaRegistry;
 import com.syed.apiqa.domain.ApiEndpoint;
 import com.syed.apiqa.domain.StepStatus;
 import com.syed.apiqa.domain.TestStep;
+import com.syed.apiqa.execution.ExecutionContext;
 import com.syed.apiqa.generation.DeterministicDataGenerator;
 import com.syed.apiqa.safety.SensitiveDataClassifier;
 import com.syed.apiqa.validation.PreRequestValidator;
@@ -193,4 +194,48 @@ public class Phase5SchemaAndAuthRealityTest {
 
         assertEquals(StepStatus.PASSED, publicStep.getStatus(), "Public endpoint must not be blocked by auth failure of other endpoints");
     }
+
+    @Test
+    @DisplayName("9. Regression Test: ExecutionContext registers session by canonical Identity ID and Identity Name")
+    void testExecutionContextSessionRegistrationByIdAndName() {
+        ExecutionContext context = new ExecutionContext("run_live_test");
+        IdentitySession session = new IdentitySession("id_test_123", "Test Identity Profile");
+        session.setAccessToken("real_token_123");
+        session.setState(AuthLifecycleState.AUTHENTICATED);
+
+        context.registerSession(session);
+
+        // Lookup by Identity ID (canonical key used by RunManager & AuthorizationMatrixEngine)
+        IdentitySession byId = context.getSession("id_test_123");
+        assertNotNull(byId, "Session must be retrievable by canonical Identity ID");
+        assertSame(session, byId, "Retrieved session must be the exact same instance");
+
+        // Lookup by Identity Name (backward compatible alias)
+        IdentitySession byName = context.getSession("Test Identity Profile");
+        assertNotNull(byName, "Session must be retrievable by Identity Name");
+        assertSame(session, byName, "Retrieved session must be the exact same instance");
+
+        // Lookup in getAllSessions map by ID
+        assertTrue(context.getAllSessions().containsKey("id_test_123"), "getAllSessions must index by identity ID");
+        assertSame(session, context.getAllSessions().get("id_test_123"));
+    }
+
+    @Test
+    @DisplayName("10. Exact Live Production Failure Regression: 'id_default' lookup succeeds for 'Primary Identity' session")
+    void testExecutionContextRegressionLiveFailurePattern() {
+        ExecutionContext context = new ExecutionContext("run_1cc2362f-ddb2-4aa8-bc9f-509fd9262368");
+        IdentitySession session = new IdentitySession("id_default", "Primary Identity");
+        session.setAccessToken("jwt_token_super_admin");
+        session.setState(AuthLifecycleState.AUTHENTICATED);
+
+        context.registerSession(session);
+
+        // In the live failure, RunManager called context.getSession(decision.getSelectedIdentity().getId()) where id was "id_default"
+        IdentitySession retrieved = context.getSession("id_default");
+        assertNotNull(retrieved, "Session MUST NOT be null when retrieved by 'id_default'");
+        assertEquals("Primary Identity", retrieved.getIdentityName());
+        assertEquals("id_default", retrieved.getIdentityId());
+        assertEquals("jwt_token_super_admin", retrieved.getAccessToken());
+    }
 }
+
