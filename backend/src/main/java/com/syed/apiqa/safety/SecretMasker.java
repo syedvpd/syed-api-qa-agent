@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 @Component
 public class SecretMasker {
 
-    public static final String REDACTED_MARKER = "[REDACTED]";
+    public static final String REDACTED_MARKER = "••••••••";
 
     private static final Set<String> SENSITIVE_HEADERS = new HashSet<>(Arrays.asList(
             "authorization",
@@ -47,6 +47,17 @@ public class SecretMasker {
             }
         }
         return sanitized;
+    }
+
+    public String maskHeader(String headerName, String headerValue) {
+        if (headerName == null || headerValue == null) return headerValue;
+        if (SENSITIVE_HEADERS.contains(headerName.toLowerCase())) {
+            if (headerName.equalsIgnoreCase("authorization") && headerValue.startsWith("Bearer ")) {
+                return "Bearer syed_••••••••";
+            }
+            return "••••••••";
+        }
+        return headerValue;
     }
 
     public String maskBody(String body) {

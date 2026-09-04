@@ -105,22 +105,78 @@ export default function RunResultsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* Trust & Evidence Principle Banner */}
-      <div className="p-4 rounded-xl border border-sky-500/30 bg-sky-950/20 flex items-center justify-between gap-4">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-white uppercase tracking-wider">Verifiable Execution Ledger</div>
-            <div className="text-[11px] text-slate-300">
-              Every row is backed by real wire HTTP dispatch facts, actual response status, and secret-redacted payloads.
+      {/* Trust & Evidence Principle Banner + 4 Canonical Pillars */}
+      <div className="p-4 rounded-xl border border-sky-500/30 bg-sky-950/20 space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-white uppercase tracking-wider">Verifiable Execution Ledger & Run Accounting</div>
+              <div className="text-[11px] text-slate-300">
+                Canonical 4-pillar accounting. No fabricated executions, zero statistical ambiguity.
+              </div>
             </div>
           </div>
+          <div className="flex items-center space-x-2 text-xs">
+            <span className="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700 text-slate-300 font-semibold">
+              Accounting Status:
+            </span>
+            <span className={`px-2.5 py-1 rounded-md font-bold text-xs border ${
+              summary?.reconciled !== false
+                ? "bg-emerald-950/60 border-emerald-500 text-emerald-400"
+                : "bg-rose-950/60 border-rose-500 text-rose-400"
+            }`}>
+              {summary?.reconciled !== false ? "✓ RECONCILED (VALID)" : "⚠ ACCOUNTING MISMATCH"}
+            </span>
+          </div>
         </div>
-        <div className="text-right text-xs">
-          <div className="text-slate-400 font-semibold">Real HTTP Requests Sent:</div>
-          <div className="text-emerald-400 font-black text-sm">{httpSentCount} / {evidenceList.length} (100% Truthful)</div>
+
+        {summary?.reconciliationEquation && (
+          <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+            <span className="text-slate-400 font-semibold">Reconciliation Formula:</span>
+            <code className="text-emerald-300 font-bold">{summary.reconciliationEquation}</code>
+          </div>
+        )}
+      </div>
+
+      {/* 4 Canonical Pillars Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-4 rounded-xl border bg-slate-900/60 border-slate-800">
+          <div className="text-slate-400 text-xs font-semibold uppercase flex items-center space-x-1.5">
+            <Layers className="h-3.5 w-3.5 text-sky-400" />
+            <span>1. API Surface</span>
+          </div>
+          <div className="text-2xl font-black text-white mt-1">{summary?.discoveredOperations ?? 0}</div>
+          <div className="text-[10px] text-slate-500 mt-1">Discovered OpenAPI routes</div>
+        </div>
+
+        <div className="p-4 rounded-xl border bg-slate-900/60 border-slate-800">
+          <div className="text-slate-400 text-xs font-semibold uppercase flex items-center space-x-1.5">
+            <Zap className="h-3.5 w-3.5 text-indigo-400" />
+            <span>2. Test Plan</span>
+          </div>
+          <div className="text-2xl font-black text-white mt-1">{summary?.totalPlannedTests ?? evidenceList.length}</div>
+          <div className="text-[10px] text-slate-500 mt-1">Planned test cases / steps</div>
+        </div>
+
+        <div className="p-4 rounded-xl border bg-slate-900/60 border-slate-800">
+          <div className="text-slate-400 text-xs font-semibold uppercase flex items-center space-x-1.5">
+            <Activity className="h-3.5 w-3.5 text-emerald-400" />
+            <span>3. Wire Execution</span>
+          </div>
+          <div className="text-2xl font-black text-emerald-400 mt-1">{httpSentCount}</div>
+          <div className="text-[10px] text-slate-500 mt-1">{summary?.httpNotSentCount ?? (evidenceList.length - httpSentCount)} requests withheld</div>
+        </div>
+
+        <div className="p-4 rounded-xl border bg-slate-900/60 border-slate-800">
+          <div className="text-slate-400 text-xs font-semibold uppercase flex items-center space-x-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 text-purple-400" />
+            <span>4. Unique Dispatched</span>
+          </div>
+          <div className="text-2xl font-black text-purple-400 mt-1">{summary?.uniqueEndpointsDispatched ?? 0}</div>
+          <div className="text-[10px] text-slate-500 mt-1">Unique routes tested on wire</div>
         </div>
       </div>
 
@@ -134,7 +190,7 @@ export default function RunResultsPage({ params }: { params: { id: string } }) {
               : "bg-slate-900/40 border-slate-800 hover:bg-slate-800/40"
           }`}
         >
-          <div className="text-slate-400 text-xs font-semibold uppercase">Total Planned Tests</div>
+          <div className="text-slate-400 text-xs font-semibold uppercase">All Planned Tests</div>
           <div className="text-2xl font-black text-white mt-1">{evidenceList.length}</div>
           <div className="text-[10px] text-slate-500 mt-1">Click to view all steps</div>
         </button>

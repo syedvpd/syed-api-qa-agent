@@ -256,6 +256,25 @@ public class ExecutionEvidenceDto implements Serializable {
     public String getSuggestedRemediation() { return suggestedRemediation; }
     public void setSuggestedRemediation(String suggestedRemediation) { this.suggestedRemediation = suggestedRemediation; }
 
+    // Compatibility Aliases for unified API contracts
+    public String getHttpMethod() { return method; }
+    public void setHttpMethod(String m) { this.method = m; }
+
+    public Integer getResponseStatusCode() { return responseStatus; }
+    public void setResponseStatusCode(Integer s) { this.responseStatus = s; }
+
+    public String getResultStatus() { return status; }
+    public void setResultStatus(String s) { this.status = s; }
+
+    public String getDiagnosis() { return customerExplanation; }
+    public void setDiagnosis(String d) { this.customerExplanation = d; }
+
+    public String getRemediation() { return suggestedRemediation; }
+    public void setRemediation(String r) { this.suggestedRemediation = r; }
+
+    public String getRouteTemplate() { return pathTemplate; }
+    public void setRouteTemplate(String t) { this.pathTemplate = t; }
+
     public static class AssertionItemDto implements Serializable {
         private String assertionType;
         private String targetField;

@@ -38,8 +38,8 @@ class SecretMaskerTest {
         String rawJson = "{\"username\":\"admin\",\"password\":\"superSecretPassword123\",\"token\":\"jwt.xyz\"}";
         String maskedJson = masker.maskBody(rawJson);
 
-        assertTrue(maskedJson.contains("\"password\":\"[REDACTED]\""));
-        assertTrue(maskedJson.contains("\"token\":\"[REDACTED]\""));
+        assertTrue(maskedJson.contains("\"password\":\"" + SecretMasker.REDACTED_MARKER + "\""));
+        assertTrue(maskedJson.contains("\"token\":\"" + SecretMasker.REDACTED_MARKER + "\""));
         assertTrue(maskedJson.contains("\"username\":\"admin\""));
         assertFalse(maskedJson.contains("superSecretPassword123"));
     }
