@@ -85,6 +85,7 @@ public class ExecutionContext {
     private final Map<String, RuntimeVariable> runtimeVariables = new ConcurrentHashMap<>();
     private final Map<String, VariableProvenance> provenances = new ConcurrentHashMap<>();
     private final Map<String, IdentitySession> sessions = new ConcurrentHashMap<>();
+    private final ResourceRegistry resourceRegistry = new ResourceRegistry();
 
     private static final Pattern POSTMAN_VAR_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}");
     private static final Pattern MUSTACHE_VAR_PATTERN = Pattern.compile("\\{\\{([^}]+)\\}\\}");
@@ -92,6 +93,10 @@ public class ExecutionContext {
 
     public ExecutionContext(String testRunId) {
         this.testRunId = testRunId;
+    }
+
+    public ResourceRegistry getResourceRegistry() {
+        return resourceRegistry;
     }
 
     public String getTestRunId() {

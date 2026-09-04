@@ -66,6 +66,8 @@ public class RunManager {
     private final com.syed.apiqa.auth.engine.SecurityDecisionEngine securityDecisionEngine;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.syed.apiqa.discovery.OpenApiSchemaRegistry openApiSchemaRegistry;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.syed.apiqa.persistence.SpecificationSnapshotRepository specSnapshotRepository;
 
     // Concurrency limiter: dynamically configured via syed.safety.max-concurrency
     private final int maxConcurrency;
@@ -313,6 +315,27 @@ public class RunManager {
             run.setTargetBaseUrl(discovery.getResolvedBaseUrl());
             run.setTotalEndpoints(discovery.getEndpoints().size());
             testRunRepository.save(run);
+
+            if (specSnapshotRepository != null) {
+                try {
+                    String oasVer = (discovery.getOpenAPI() != null && discovery.getOpenAPI().getOpenapi() != null)
+                            ? discovery.getOpenAPI().getOpenapi() : "3.0.0";
+                    com.syed.apiqa.domain.SpecificationSnapshot snapshot = new com.syed.apiqa.domain.SpecificationSnapshot(
+                            UUID.randomUUID().toString(),
+                            run,
+                            discoveryResult.getOriginalUrl(),
+                            specUrlToParse,
+                            oasVer,
+                            discovery.getResolvedBaseUrl(),
+                            discovery.getEndpoints().size(),
+                            rawSpec
+                    );
+                    specSnapshotRepository.save(snapshot);
+                    recordAudit(run, "SPEC_SNAPSHOT_SAVED", "SYSTEM", "Immutable specification snapshot persisted (" + rawSpec.length() + " bytes).");
+                } catch (Exception e) {
+                    log.warn("Failed to persist SpecificationSnapshot for run {}: {}", run.getId(), e.getMessage());
+                }
+            }
 
             for (ApiEndpoint ep : discovery.getEndpoints()) {
                 apiEndpointRepository.save(ep);

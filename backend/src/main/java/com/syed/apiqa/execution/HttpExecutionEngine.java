@@ -539,6 +539,19 @@ public class HttpExecutionEngine {
                 );
                 context.setRuntimeVariable(rv);
 
+                // Register created parent resource into ResourceRegistry for foreign key injection
+                if (context.getResourceRegistry() != null && ev.getRawValue() != null) {
+                    String nameLower = ev.getName().toLowerCase();
+                    if ("id".equals(nameLower) || nameLower.endsWith(".id")) {
+                        context.getResourceRegistry().registerCreatedResource(entity, ev.getRawValue(), Map.of("variable", ev.getName()));
+                    } else if (nameLower.endsWith("_id")) {
+                        String refEntity = nameLower.replaceAll("(_id)$", "").replaceAll("^.*\\.", "");
+                        if (!refEntity.isBlank()) {
+                            context.getResourceRegistry().registerCreatedResource(refEntity, ev.getRawValue(), Map.of("variable", ev.getName()));
+                        }
+                    }
+                }
+
                 // Do not persist sensitive variables in public unmasked captured_variables database table
                 if (ev.isSensitive()) {
                     continue;

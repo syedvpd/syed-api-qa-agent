@@ -45,11 +45,11 @@ public class SecurityDecisionEngine {
             return decision;
         }
 
-        // 2. Explicitly public operation (security: [])
-        if (securityRequirements != null && securityRequirements.isEmpty()) {
+        // 2. Explicitly public operation (security: []) or public system endpoint heuristic
+        if ((securityRequirements != null && securityRequirements.isEmpty()) || isPublicEndpointHeuristic(endpoint, securityRequirements)) {
             decision.setSecurityState(OperationSecurityDecision.SecurityState.NO_SECURITY);
             decision.setAuthenticationRequired(false);
-            decision.setReason("Explicitly public operation (security: [])");
+            decision.setReason("Explicitly public operation (security: []) or public system endpoint");
             decision.setExecutionAllowed(true);
             decision.setConfidence("HIGH");
             return decision;
@@ -58,10 +58,19 @@ public class SecurityDecisionEngine {
         // 3. Unknown security metadata (no security declared on endpoint or OpenAPI root)
         if (securityRequirements == null) {
             decision.setSecurityState(OperationSecurityDecision.SecurityState.SECURITY_UNKNOWN);
-            decision.setAuthenticationRequired(false);
-            decision.setReason("No security requirements defined in contract. Defaulting open.");
+            decision.setAuthenticationRequired(true);
+            decision.setReason("No security requirements defined in contract. Defaulting to available authenticated session.");
             decision.setExecutionAllowed(true);
-            decision.setConfidence("LOW");
+            decision.setConfidence("MEDIUM");
+            if (profiles != null && !profiles.isEmpty()) {
+                decision.setSelectedIdentity(profiles.get(0));
+            } else {
+                CredentialProfile defaultProfile = new CredentialProfile();
+                defaultProfile.setId("primary-identity");
+                defaultProfile.setName("Primary Identity");
+                defaultProfile.setStrategy(CredentialProfile.AuthStrategy.BEARER_TOKEN);
+                decision.setSelectedIdentity(defaultProfile);
+            }
             return decision;
         }
 
@@ -79,7 +88,21 @@ public class SecurityDecisionEngine {
             decision.setExecutionAllowed(true);
             decision.setConfidence(bestMatch.confidence);
             decision.setReason("Selected identity [" + bestMatch.profile.getName() + "] matching required schemes/scopes: " + bestMatch.matchReason);
-        } else if (profiles == null || profiles.isEmpty()) {
+        } else if (profiles != null && !profiles.isEmpty()) {
+            boolean hasRequiredScopes = securityRequirements.stream().anyMatch(req -> req.values().stream().anyMatch(scopes -> scopes != null && !scopes.isEmpty()));
+            if (hasRequiredScopes) {
+                decision.setSelectedIdentity(null);
+                decision.setExecutionAllowed(false);
+                decision.setConfidence("HIGH");
+                decision.setReason("NO_COMPATIBLE_IDENTITY: No candidate identity has required scopes: " + securityRequirements);
+            } else {
+                // Fallback to first configured active profile when requirement is unscoped
+                decision.setSelectedIdentity(profiles.get(0));
+                decision.setExecutionAllowed(true);
+                decision.setConfidence("MEDIUM");
+                decision.setReason("Fallback to active profile [" + profiles.get(0).getName() + "] for operation authentication.");
+            }
+        } else {
             // When no explicit multi-identity profiles are specified, allow execution with the run's primary credentials
             CredentialProfile defaultProfile = new CredentialProfile();
             defaultProfile.setId("primary-identity");
@@ -89,14 +112,16 @@ public class SecurityDecisionEngine {
             decision.setExecutionAllowed(true);
             decision.setConfidence("HIGH");
             decision.setReason("Using run primary authentication session for secured operation.");
-        } else {
-            decision.setSelectedIdentity(null);
-            decision.setExecutionAllowed(false);
-            decision.setConfidence("HIGH");
-            decision.setReason("NO_COMPATIBLE_IDENTITY: Operation requires security schemes " + securityRequirements + ", but no available credential profile satisfies the required scopes or authentication strategy.");
         }
 
         return decision;
+    }
+
+    private boolean isPublicEndpointHeuristic(ApiEndpoint endpoint, List<SecurityRequirement> securityRequirements) {
+        if (securityRequirements != null) return false;
+        String path = endpoint.getPath() != null ? endpoint.getPath().toLowerCase() : "";
+        return path.endsWith("/health") || path.endsWith("/healthz") || path.contains("/system/health")
+                || path.endsWith("/version") || path.endsWith("/ping") || path.endsWith("/info");
     }
 
     private static class CandidateMatch {

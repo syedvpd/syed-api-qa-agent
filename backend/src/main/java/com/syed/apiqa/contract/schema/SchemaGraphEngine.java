@@ -315,11 +315,13 @@ public class SchemaGraphEngine {
 
     private SchemaGenerationResult generateInteger(Schema<?> schema, String propertyPath, Random random, List<GenerationTrace> traces) {
         long min = schema.getMinimum() != null ? schema.getMinimum().longValue() : 1L;
-        long max = schema.getMaximum() != null ? schema.getMaximum().longValue() : 1000L;
+        long max = schema.getMaximum() != null ? schema.getMaximum().longValue() : 50L;
         if (schema.getExclusiveMinimumValue() != null) min = schema.getExclusiveMinimumValue().longValue() + 1L;
         if (schema.getExclusiveMaximumValue() != null) max = schema.getExclusiveMaximumValue().longValue() - 1L;
+        if (max < min) max = min;
 
-        long val = min + (Math.abs(random.nextLong()) % (Math.max(1, max - min + 1)));
+        long range = Math.max(1, max - min + 1);
+        long val = min + (Math.abs(random.nextLong()) % range);
         traces.add(new GenerationTrace(propertyPath, "IntegerConstraintGenerator", "Generated integer within [" + min + ", " + max + "]", ContractConfidence.MEDIUM));
         return new SchemaGenerationResult.Success(val, ContractConfidence.MEDIUM, traces);
     }
