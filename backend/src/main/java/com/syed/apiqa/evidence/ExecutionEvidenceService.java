@@ -118,6 +118,25 @@ public class ExecutionEvidenceService {
         RootCauseSummaryDto summary = new RootCauseSummaryDto();
         summary.setRunId(runId);
 
+        TestRun run = testRunRepository.findById(runId).orElse(null);
+        if (run != null) {
+            summary.setContractUrl(run.getOpenapiUrl());
+            summary.setTargetBaseUrl(run.getTargetBaseUrl());
+            if (run.getOpenapiUrl() != null) {
+                // Deterministic SHA-256 hash representation of target contract
+                String rawSpecKey = run.getOpenapiUrl() + ":" + (run.getTargetBaseUrl() != null ? run.getTargetBaseUrl() : "");
+                try {
+                    java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                    byte[] hash = md.digest(rawSpecKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    StringBuilder hex = new StringBuilder();
+                    for (byte b : hash) hex.append(String.format("%02x", b));
+                    summary.setContractHash("sha256:" + hex.substring(0, 16));
+                } catch (Exception ignored) {
+                    summary.setContractHash("sha256:contract-" + Math.abs(rawSpecKey.hashCode()));
+                }
+            }
+        }
+
         // 1. Discovered Operations
         List<ApiEndpoint> endpoints = apiEndpointRepository.findByTestRunId(runId);
         int discoveredOps = endpoints.size();

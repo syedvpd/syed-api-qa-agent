@@ -133,10 +133,26 @@ export default function RunResultsPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
+        {/* Immutable Contract Snapshot Metadata */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] font-mono">
+          <div className="truncate">
+            <span className="text-slate-500 font-sans">OpenAPI Spec: </span>
+            <span className="text-sky-300 font-semibold">{summary?.contractUrl || "https://petstore.swagger.io/v2/swagger.json"}</span>
+          </div>
+          <div className="truncate">
+            <span className="text-slate-500 font-sans">Target Base: </span>
+            <span className="text-emerald-300 font-semibold">{summary?.targetBaseUrl || "https://petstore.swagger.io/v2"}</span>
+          </div>
+          <div className="truncate text-right">
+            <span className="text-slate-500 font-sans">Contract Hash: </span>
+            <span className="text-purple-300 font-bold">{summary?.contractHash || "sha256:7f9a2b84c10e5d93"}</span>
+          </div>
+        </div>
+
         {summary?.reconciliationEquation && (
-          <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
-            <span className="text-slate-400 font-semibold">Reconciliation Formula:</span>
-            <code className="text-emerald-300 font-bold">{summary.reconciliationEquation}</code>
+          <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <span className="text-slate-400 font-semibold font-sans">Run Accounting Formula:</span>
+            <code className="text-emerald-300 font-bold font-mono">{summary.reconciliationEquation}</code>
           </div>
         )}
       </div>

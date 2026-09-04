@@ -13,6 +13,9 @@ import java.util.List;
 public class RootCauseSummaryDto implements Serializable {
 
     private String runId;
+    private String contractUrl;
+    private String targetBaseUrl;
+    private String contractHash;
 
     // --- 4 Canonical Pillars of Execution Truth ---
     private int discoveredOperations;      // Unique OpenAPI routes/operations discovered
@@ -43,6 +46,15 @@ public class RootCauseSummaryDto implements Serializable {
 
     public String getRunId() { return runId; }
     public void setRunId(String runId) { this.runId = runId; }
+
+    public String getContractUrl() { return contractUrl; }
+    public void setContractUrl(String contractUrl) { this.contractUrl = contractUrl; }
+
+    public String getTargetBaseUrl() { return targetBaseUrl; }
+    public void setTargetBaseUrl(String targetBaseUrl) { this.targetBaseUrl = targetBaseUrl; }
+
+    public String getContractHash() { return contractHash; }
+    public void setContractHash(String contractHash) { this.contractHash = contractHash; }
 
     public int getDiscoveredOperations() { return discoveredOperations; }
     public void setDiscoveredOperations(int discoveredOperations) { this.discoveredOperations = discoveredOperations; }
