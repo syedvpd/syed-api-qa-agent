@@ -12,8 +12,8 @@ import java.util.regex.Pattern;
 
 /**
  * Thread-safe execution context scoped strictly to a single TestRun.
- * Stores extracted variables with provenance and resolves Postman-like ${variable},
- * mustache {{variable}}, and OpenAPI {variable} placeholders across multiple scopes.
+ * Stores extracted variables with full provenance and runtime type information,
+ * and resolves Postman-like ${variable}, mustache {{variable}}, and OpenAPI {variable} placeholders.
  */
 public class ExecutionContext {
 
@@ -51,8 +51,38 @@ public class ExecutionContext {
         public OffsetDateTime getCapturedAt() { return capturedAt; }
     }
 
+    public static class RuntimeVariable implements Serializable {
+        private final String name;
+        private final String stringValue;
+        private final VariableExtractionEngine.VariableType type;
+        private final Object rawValue;
+        private final boolean sensitive;
+        private final VariableProvenance provenance;
+        private final OffsetDateTime capturedAt;
+
+        public RuntimeVariable(String name, String stringValue, VariableExtractionEngine.VariableType type,
+                               Object rawValue, boolean sensitive, VariableProvenance provenance) {
+            this.name = name;
+            this.stringValue = stringValue;
+            this.type = type != null ? type : VariableExtractionEngine.VariableType.STRING;
+            this.rawValue = rawValue != null ? rawValue : stringValue;
+            this.sensitive = sensitive;
+            this.provenance = provenance;
+            this.capturedAt = OffsetDateTime.now();
+        }
+
+        public String getName() { return name; }
+        public String getStringValue() { return stringValue; }
+        public VariableExtractionEngine.VariableType getType() { return type; }
+        public Object getRawValue() { return rawValue; }
+        public boolean isSensitive() { return sensitive; }
+        public VariableProvenance getProvenance() { return provenance; }
+        public OffsetDateTime getCapturedAt() { return capturedAt; }
+    }
+
     private final String testRunId;
     private final Map<String, String> variables = new ConcurrentHashMap<>();
+    private final Map<String, RuntimeVariable> runtimeVariables = new ConcurrentHashMap<>();
     private final Map<String, VariableProvenance> provenances = new ConcurrentHashMap<>();
     private final Map<String, IdentitySession> sessions = new ConcurrentHashMap<>();
 
@@ -84,16 +114,55 @@ public class ExecutionContext {
             if (provenance != null) {
                 provenances.put(trimmedName, provenance);
             }
+            runtimeVariables.put(trimmedName, new RuntimeVariable(
+                    trimmedName, trimmedVal, VariableExtractionEngine.VariableType.STRING, trimmedVal, false, provenance
+            ));
         }
+    }
+
+    public void setRuntimeVariable(RuntimeVariable var) {
+        if (var != null && var.getName() != null) {
+            String trimmedName = var.getName().trim();
+            runtimeVariables.put(trimmedName, var);
+            if (var.getStringValue() != null) {
+                variables.put(trimmedName, var.getStringValue());
+            }
+            if (var.getProvenance() != null) {
+                provenances.put(trimmedName, var.getProvenance());
+            }
+        }
+    }
+
+    public RuntimeVariable getRuntimeVariable(String name) {
+        if (name == null) return null;
+        RuntimeVariable rv = runtimeVariables.get(name.trim());
+        if (rv != null) return rv;
+
+        String val = getVariable(name);
+        if (val != null) {
+            return runtimeVariables.get(val);
+        }
+        return null;
+    }
+
+    public boolean hasVariable(String name) {
+        return getVariable(name) != null;
     }
 
     public String getVariable(String name) {
         if (name == null) return null;
-        String val = variables.get(name.trim());
+        String trimmed = name.trim();
+        String val = variables.get(trimmed);
         if (val != null) return val;
 
+        // Strip leading $. or $ or /
+        if (trimmed.startsWith("$.") || trimmed.startsWith("/")) {
+            String stripped = trimmed.replaceFirst("^(\\$\\.|/)", "");
+            if (variables.containsKey(stripped)) return variables.get(stripped);
+        }
+
         // Fallback: if name is "userId", check "user.id", "user_id", "id"
-        String lower = name.toLowerCase();
+        String lower = trimmed.toLowerCase();
         if (lower.endsWith("id") && lower.length() > 2) {
             String prefix = lower.substring(0, lower.length() - 2);
             if (variables.containsKey(prefix + ".id")) return variables.get(prefix + ".id");
@@ -103,13 +172,13 @@ public class ExecutionContext {
         }
 
         // Fallback: if name is "user.id" and we have "id", or name is "id" and we have "user.id"
-        if (name.contains(".")) {
-            String prop = name.substring(name.indexOf('.') + 1);
+        if (trimmed.contains(".")) {
+            String prop = trimmed.substring(trimmed.indexOf('.') + 1);
             if (variables.containsKey(prop)) return variables.get(prop);
         } else {
             // Find any key ending with .<name>
             for (Map.Entry<String, String> entry : variables.entrySet()) {
-                if (entry.getKey().endsWith("." + name)) {
+                if (entry.getKey().endsWith("." + trimmed)) {
                     return entry.getValue();
                 }
             }
@@ -127,6 +196,10 @@ public class ExecutionContext {
 
     public Map<String, String> getAllVariables() {
         return Collections.unmodifiableMap(variables);
+    }
+
+    public Map<String, RuntimeVariable> getAllRuntimeVariables() {
+        return Collections.unmodifiableMap(runtimeVariables);
     }
 
     public void registerSession(IdentitySession session) {

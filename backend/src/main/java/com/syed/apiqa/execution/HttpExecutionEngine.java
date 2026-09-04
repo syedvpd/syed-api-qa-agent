@@ -56,6 +56,7 @@ public class HttpExecutionEngine {
     private final AssertionResultRepository assertionResultRepository;
     private final CapturedVariableRepository capturedVariableRepository;
     private final com.syed.apiqa.persistence.TestRunRepository testRunRepository;
+    private final VariableExtractionEngine variableExtractionEngine;
     private final ObjectMapper objectMapper;
 
     @Value("${syed.safety.default-timeout-seconds:15}")
@@ -72,6 +73,7 @@ public class HttpExecutionEngine {
                                AssertionResultRepository assertionResultRepository,
                                CapturedVariableRepository capturedVariableRepository,
                                com.syed.apiqa.persistence.TestRunRepository testRunRepository,
+                               VariableExtractionEngine variableExtractionEngine,
                                ObjectMapper objectMapper) {
         this.ssrfGuard = ssrfGuard;
         this.secretMasker = secretMasker;
@@ -80,6 +82,7 @@ public class HttpExecutionEngine {
         this.assertionResultRepository = assertionResultRepository;
         this.capturedVariableRepository = capturedVariableRepository;
         this.testRunRepository = testRunRepository;
+        this.variableExtractionEngine = variableExtractionEngine != null ? variableExtractionEngine : new VariableExtractionEngine(objectMapper);
         this.objectMapper = objectMapper;
     }
 
@@ -89,8 +92,19 @@ public class HttpExecutionEngine {
                                ExecutionRepository executionRepository,
                                AssertionResultRepository assertionResultRepository,
                                CapturedVariableRepository capturedVariableRepository,
+                               com.syed.apiqa.persistence.TestRunRepository testRunRepository,
                                ObjectMapper objectMapper) {
-        this(ssrfGuard, secretMasker, assertionEngine, executionRepository, assertionResultRepository, capturedVariableRepository, null, objectMapper);
+        this(ssrfGuard, secretMasker, assertionEngine, executionRepository, assertionResultRepository, capturedVariableRepository, testRunRepository, null, objectMapper);
+    }
+
+    public HttpExecutionEngine(SsrfProtectionGuard ssrfGuard,
+                               SecretMasker secretMasker,
+                               AssertionEngine assertionEngine,
+                               ExecutionRepository executionRepository,
+                               AssertionResultRepository assertionResultRepository,
+                               CapturedVariableRepository capturedVariableRepository,
+                               ObjectMapper objectMapper) {
+        this(ssrfGuard, secretMasker, assertionEngine, executionRepository, assertionResultRepository, capturedVariableRepository, null, null, objectMapper);
     }
 
     public static class StepExecutionOutcome {
@@ -493,60 +507,51 @@ public class HttpExecutionEngine {
         try {
             JsonNode root = objectMapper.readTree(jsonBody);
             String entity = extractEntityPrefix(step.getPathTemplate());
+            String endpoint = (step.getMethod() != null ? step.getMethod() : "GET") + " " + step.getPathTemplate();
+            String stepName = step.getName() != null ? step.getName() : "Step";
+            String identityName = context != null && context.getAllSessions() != null && !context.getAllSessions().isEmpty()
+                    ? context.getAllSessions().keySet().iterator().next() : "default";
 
-            if (root.isObject()) {
-                Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
-                while (fields.hasNext()) {
-                    Map.Entry<String, JsonNode> field = fields.next();
-                    String key = field.getKey();
-                    JsonNode val = field.getValue();
+            List<VariableExtractionEngine.ExtractedVariable> extracted = variableExtractionEngine.extractAll(
+                    root, entity, endpoint, stepName, identityName
+            );
 
-                    // Skip sensitive fields to prevent storing credentials in DB
-                    if (SENSITIVE_KEYS.contains(key.toLowerCase())) continue;
+            TestRun run = null;
+            if (context != null && context.getRunId() != null && testRunRepository != null) {
+                run = testRunRepository.findById(context.getRunId()).orElse(null);
+            }
+            if (run == null && step.getTestCase() != null) {
+                try {
+                    run = step.getTestCase().getTestRun();
+                } catch (Exception ignored) {}
+            }
 
-                    if (val.isValueNode() && !val.isNull()) {
-                        String valueStr = val.asText();
+            Set<String> savedNames = new HashSet<>();
+            for (VariableExtractionEngine.ExtractedVariable ev : extracted) {
+                // Register runtime variable in execution context (preserves type & provenance)
+                ExecutionContext.RuntimeVariable rv = new ExecutionContext.RuntimeVariable(
+                        ev.getName(),
+                        ev.getStringValue(),
+                        ev.getType(),
+                        ev.getRawValue(),
+                        ev.isSensitive(),
+                        ev.getProvenance()
+                );
+                context.setRuntimeVariable(rv);
 
-                        // Store scoped variable (e.g. user.id = 123)
-                        String scopedName = entity + "." + key;
-                        context.setVariable(scopedName, valueStr);
+                // Do not persist sensitive variables in public unmasked captured_variables database table
+                if (ev.isSensitive()) {
+                    continue;
+                }
 
-                        // If key is "id" or "uuid", also store bare variable for shorthand access
-                        if ("id".equalsIgnoreCase(key) || "uuid".equalsIgnoreCase(key)) {
-                            context.setVariable(key, valueStr);
-                            context.setVariable(entity + "_id", valueStr);
-                        }
-
-                        TestRun run = null;
-                        if (context != null && context.getRunId() != null && testRunRepository != null) {
-                            run = testRunRepository.findById(context.getRunId()).orElse(null);
-                        }
-                        if (run == null && step.getTestCase() != null) {
-                            try {
-                                run = step.getTestCase().getTestRun();
-                            } catch (Exception ignored) {}
-                        }
-
-                        // Persist scoped variable to database
-                        CapturedVariable cv = new CapturedVariable();
-                        cv.setId(UUID.randomUUID().toString());
-                        cv.setTestRun(run);
-                        cv.setExecution(execution);
-                        cv.setVariableName(scopedName);
-                        cv.setVariableValue(valueStr);
-                        capturedVariableRepository.save(cv);
-
-                        // Also persist alias variable (e.g. "id") if distinct
-                        if ("id".equalsIgnoreCase(key) || "uuid".equalsIgnoreCase(key)) {
-                            CapturedVariable cvAlias = new CapturedVariable();
-                            cvAlias.setId(UUID.randomUUID().toString());
-                            cvAlias.setTestRun(run);
-                            cvAlias.setExecution(execution);
-                            cvAlias.setVariableName(key);
-                            cvAlias.setVariableValue(valueStr);
-                            capturedVariableRepository.save(cvAlias);
-                        }
-                    }
+                if (savedNames.add(ev.getName()) && ev.getStringValue() != null) {
+                    CapturedVariable cv = new CapturedVariable();
+                    cv.setId(UUID.randomUUID().toString());
+                    cv.setTestRun(run);
+                    cv.setExecution(execution);
+                    cv.setVariableName(ev.getName());
+                    cv.setVariableValue(ev.getStringValue());
+                    capturedVariableRepository.save(cv);
                 }
             }
         } catch (Exception e) {
