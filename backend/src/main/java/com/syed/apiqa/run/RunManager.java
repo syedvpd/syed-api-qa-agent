@@ -409,52 +409,35 @@ public class RunManager {
             AtomicInteger failedCounter = new AtomicInteger(0);
             AtomicInteger blockedCounter = new AtomicInteger(0);
 
-            // Separate into Level 1 (CRUD workflows: producers that create resources & extract IDs)
-            // and Level 2 (Independent verification: single endpoints, pagination, negative fuzzing)
-            List<TestCase> crudCases = new ArrayList<>();
-            List<TestCase> independentCases = new ArrayList<>();
-
-            for (TestCase tc : plan.getTestCases()) {
-                if ("CRUD_WORKFLOW".equalsIgnoreCase(tc.getScenarioType())) {
-                    crudCases.add(tc);
-                } else {
-                    independentCases.add(tc);
-                }
-            }
-
             final String fAuthType = authType;
             final String fAuthCreds = authCredentials;
             final List<com.syed.apiqa.auth.CredentialProfile> fActiveProfiles = activeProfiles;
 
-            // 1. Execute Level 1 (CRUD workflows) sequentially to establish resource state & capture IDs
-            for (TestCase tc : crudCases) {
-                if (isCancelled(testRunId)) break;
+            // Execute test cases via topological DAG scheduler
+            int workerThreads = Math.min(8, Math.max(2, Runtime.getRuntime().availableProcessors() * 2));
+            com.syed.apiqa.planning.dag.DependencyGraph graph = dependencyEngine.buildDependencyGraph(run, plan.getTestCases(), dependencies);
+            com.syed.apiqa.planning.dag.DagExecutionScheduler scheduler = new com.syed.apiqa.planning.dag.DagExecutionScheduler(graph, workerThreads);
+
+            scheduler.execute(context, (node, ctx) -> {
+                if (isCancelled(testRunId)) {
+                    return com.syed.apiqa.planning.dag.DagNode.NodeStatus.SKIPPED;
+                }
+                TestCase tc = (TestCase) node.getPayload();
                 executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery, fActiveProfiles);
+
                 run.setPassedTests(passedCounter.get());
                 run.setFailedTests(failedCounter.get());
                 run.setBlockedTests(blockedCounter.get());
                 testRunRepository.save(run);
-            }
 
-            // 2. Execute Level 2 (Independent operations) concurrently with bounded thread pool
-            if (!isCancelled(testRunId) && !independentCases.isEmpty()) {
-                int workerThreads = Math.min(8, Math.max(2, Runtime.getRuntime().availableProcessors() * 2));
-                ExecutorService pool = Executors.newFixedThreadPool(workerThreads);
-                for (TestCase tc : independentCases) {
-                    pool.submit(() -> {
-                        if (!isCancelled(testRunId)) {
-                            executeTestCase(tc, run, context, fAuthType, fAuthCreds, passedCounter, failedCounter, blockedCounter, discovery, fActiveProfiles);
-                        }
-                    });
+                if (tc.getStatus() == StepStatus.PASSED) {
+                    return com.syed.apiqa.planning.dag.DagNode.NodeStatus.PASSED;
+                } else if (tc.getStatus() == StepStatus.REQUEST_NOT_EXECUTABLE || tc.getStatus() == StepStatus.BLOCKED) {
+                    return com.syed.apiqa.planning.dag.DagNode.NodeStatus.BLOCKED;
+                } else {
+                    return com.syed.apiqa.planning.dag.DagNode.NodeStatus.FAILED;
                 }
-                pool.shutdown();
-                try {
-                    pool.awaitTermination(timeoutSeconds, TimeUnit.SECONDS);
-                } catch (InterruptedException ie) {
-                    pool.shutdownNow();
-                    Thread.currentThread().interrupt();
-                }
-            }
+            });
 
             run.setPassedTests(passedCounter.get());
             run.setFailedTests(failedCounter.get());
