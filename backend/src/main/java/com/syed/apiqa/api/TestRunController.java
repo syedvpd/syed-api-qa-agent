@@ -37,6 +37,7 @@ public class TestRunController {
     private final com.syed.apiqa.persistence.RunAuditEventRepository auditEventRepository;
     private final com.syed.apiqa.persistence.EndpointCoverageRepository endpointCoverageRepository;
     private final com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService;
+    private final com.syed.apiqa.evidence.ExecutionEvidenceService executionEvidenceService;
 
     public TestRunController(TestRunRepository testRunRepository,
                              ApiEndpointRepository apiEndpointRepository,
@@ -55,7 +56,8 @@ public class TestRunController {
                              com.syed.apiqa.persistence.RegressionFindingRepository regressionFindingRepository,
                              com.syed.apiqa.persistence.RunAuditEventRepository auditEventRepository,
                              com.syed.apiqa.persistence.EndpointCoverageRepository endpointCoverageRepository,
-                             com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService) {
+                             com.syed.apiqa.auth.engine.AuthenticationPreflightService preflightService,
+                             com.syed.apiqa.evidence.ExecutionEvidenceService executionEvidenceService) {
         this.testRunRepository = testRunRepository;
         this.apiEndpointRepository = apiEndpointRepository;
         this.testCaseRepository = testCaseRepository;
@@ -74,6 +76,7 @@ public class TestRunController {
         this.auditEventRepository = auditEventRepository;
         this.endpointCoverageRepository = endpointCoverageRepository;
         this.preflightService = preflightService;
+        this.executionEvidenceService = executionEvidenceService;
     }
 
     @GetMapping
@@ -359,6 +362,50 @@ public class TestRunController {
             result.add(caseData);
         }
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/{id}/evidence")
+    public ResponseEntity<?> getExecutionEvidence(
+            @PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
+
+        List<com.syed.apiqa.evidence.ExecutionEvidenceDto> evidence = executionEvidenceService.getEvidenceForRun(id);
+        return ResponseEntity.ok(evidence);
+    }
+
+    @GetMapping("/{id}/evidence/summary")
+    public ResponseEntity<?> getRootCauseSummary(
+            @PathVariable String id,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
+
+        com.syed.apiqa.evidence.RootCauseSummaryDto summary = executionEvidenceService.getRootCauseSummary(id);
+        return ResponseEntity.ok(summary);
+    }
+
+    @GetMapping("/{id}/evidence/{stepId}")
+    public ResponseEntity<?> getStepEvidence(
+            @PathVariable String id,
+            @PathVariable String stepId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            java.security.Principal principal) {
+        Optional<TestRun> runOpt = testRunRepository.findById(id);
+        if (runOpt.isEmpty()) return ResponseEntity.notFound().build();
+        ResponseEntity<?> authCheck = checkOwnership(runOpt.get(), userId, principal);
+        if (authCheck != null) return authCheck;
+
+        com.syed.apiqa.evidence.ExecutionEvidenceDto evidence = executionEvidenceService.getEvidenceForStep(stepId);
+        if (evidence == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(evidence);
     }
 
     @GetMapping("/{id}/coverage")
