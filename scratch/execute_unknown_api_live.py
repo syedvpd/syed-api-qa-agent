@@ -11,7 +11,7 @@ ctx.verify_mode = ssl.CERT_NONE
 
 BASE_URL = 'https://syed-api-testing-agent.onrender.com'
 TARGET_BASE = 'https://jsonplaceholder.typicode.com'
-SPEC_URL = 'https://syed-api-testing-agent.onrender.com/api/specs/jsonplaceholder.json'
+SPEC_URL = 'https://raw.githubusercontent.com/syedvpd/syed-api-qa-agent/main/backend/src/main/resources/static/jsonplaceholder_openapi.json'
 
 print('=== 1. LOADING FROZEN JSONPLACEHOLDER OPENAPI SNAPSHOT & HASHING ===')
 with open('backend/src/main/resources/static/jsonplaceholder_openapi.json', 'rb') as f:
@@ -82,7 +82,7 @@ with urllib.request.urlopen(req_run, timeout=30, context=ctx) as resp:
 
 print('\n=== 3. POLLING TEST RUN EXECUTION PROGRESS ===')
 status = 'RUNNING'
-for i in range(40):
+for i in range(120):
     time.sleep(3)
     req_status = urllib.request.Request(f'{BASE_URL}/api/runs/{run_id}', headers=auth_headers)
     with urllib.request.urlopen(req_status, timeout=30, context=ctx) as resp:
@@ -174,7 +174,7 @@ with urllib.request.urlopen(evidence_req, timeout=30, context=ctx) as resp:
         assert blocked_sample.get('httpSent') == False, 'BLOCKED must have httpSent=False'
 
 print('\n=== 7. VERIFYING HTML & PDF AUDIT REPORTS ===')
-html_req = urllib.request.Request(f'{BASE_URL}/api/runs/{run_id}/report/html', headers=auth_headers)
+html_req = urllib.request.Request(f'{BASE_URL}/api/runs/{run_id}/report', headers=auth_headers)
 with urllib.request.urlopen(html_req, timeout=30, context=ctx) as resp:
     html_content = resp.read().decode('utf-8')
     print(f'HTML Report fetched: {len(html_content)} bytes (Status {resp.status})')
